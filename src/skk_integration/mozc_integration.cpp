@@ -274,13 +274,29 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
     MozcIntegration::SkkConfigSnapshot cfg;
     if (impl->config_accessor) cfg = impl->config_accessor();
-    fcitx_list->setPageSize(cfg.page_size);
+    // Cap pageSize at the actual candidate count: empty trailing slots
+    // (size() returning n while pageSize asks for 9) were a likely
+    // trigger of fcitx5's CommonCandidateList::label() bounds assertion
+    // when the cursor reached the last item.
+    int desired = cfg.page_size > 0 ? cfg.page_size : 9;
+    int capped = std::min<int>(desired, static_cast<int>(merged.size()));
+    if (capped <= 0) capped = 1;
+    fcitx_list->setPageSize(capped);
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
-    fcitx_list->setSelectionKey(selectionKeysFor(cfg.choose_key));
+    // Trim selection-key list to the same size so labels_ never exceeds
+    // pageSize either.
+    auto sel = selectionKeysFor(cfg.choose_key);
+    if (static_cast<int>(sel.size()) > capped) {
+        sel.resize(capped);
+    }
+    fcitx_list->setSelectionKey(sel);
     // Pin the cursor model so wrap-around at list boundaries is predictable
     // and never produces -1 (which crashed fcitx5's renderer in some cases).
+    // KeepInSamePage(true) is critical: when the cursor was allowed to
+    // cross a page boundary during navigation, fcitx5 5.1.19 fired
+    // 'CommonCandidateList: invalid index' on the next render and aborted.
     fcitx_list->setCursorIncludeUnselected(false);
-    fcitx_list->setCursorKeepInSamePage(false);
+    fcitx_list->setCursorKeepInSamePage(true);
 
     // Pre-compute the concatenated segment surface so the callback can
     // decide whether to break the commit into per-segment learn pairs.

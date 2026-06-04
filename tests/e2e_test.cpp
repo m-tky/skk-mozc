@@ -151,12 +151,12 @@ int main(int argc, char **argv) {
                       "space", "Return"});
 
             // === Scenario 4: navigate past the last candidate ===
-            // The user reported fcitx5 crashing when pressing Space after
-            // reaching the bottom of the candidate list. This scenario
-            // hammers Space many times — more than there could plausibly
-            // be candidates — to exercise the boundary path repeatedly.
-            // No commit expectation is pushed: the test passes simply by
-            // not crashing fcitx5 / segfaulting the test binary.
+            // (a) Short yomi (small candidate count, all fit in one page):
+            //     spam Space past the last to hit the within-page boundary.
+            // (b) Longer yomi (many candidates → multiple pages): spam
+            //     Space across page boundaries — this is the path that
+            //     historically tripped fcitx5's invalid-index assertion.
+            // No commit expectation: PASS means we survived the spam.
             sendKeys(testfrontend, uuid,
                      {"A", "s", "a", "h", "i", "space"});
             for (int i = 0; i < 50; ++i) {
@@ -165,7 +165,16 @@ int main(int argc, char **argv) {
                 testfrontend->call<ITestFrontend::keyEvent>(
                     uuid, Key("space"), true);
             }
-            // Cancel cleanly to leave libskk in a fresh state.
+            sendKeys(testfrontend, uuid, {"Escape"});
+
+            sendKeys(testfrontend, uuid,
+                     {"K", "a", "n", "j", "i", "space"});
+            for (int i = 0; i < 200; ++i) {
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("space"), false);
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("space"), true);
+            }
             sendKeys(testfrontend, uuid, {"Escape"});
 
             instance.exit();
