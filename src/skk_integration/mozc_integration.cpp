@@ -407,11 +407,12 @@ bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
 }
 
 namespace {
-// Forward decl; the definition lives further down alongside the panel-key
-// translation helpers.
+// Forward decls; definitions live further down.
 skk_mozc::dispatch::PanelKey classifyPanelKey(
     const fcitx::Key &k,
     MozcIntegration::CandidateChooseKeyStyle choose_style);
+std::vector<SkkSideCandidate>
+lookupSkkCandidates(MozcIntegration::Impl *impl, const std::string &yomi);
 } // namespace
 
 bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
