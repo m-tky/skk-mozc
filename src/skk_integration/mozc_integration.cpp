@@ -673,13 +673,20 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
 
     using A = skk_mozc::dispatch::PanelAction;
     auto refresh_ui = [&]() {
-        // We DO NOT call mirrorFocusedCandidateToPreedit here on every
-        // navigation: each preedit update triggers an extra UI render, and
-        // when that update happens just as the candidate list cursor is
-        // near the page boundary it would trip fcitx5's
-        // 'CommonCandidateList: invalid index' assertion (crashing fcitx5).
-        // The candidate panel itself highlights the focused row, which is
-        // sufficient feedback while navigating.
+        // Mirror the focused candidate to the inline preedit but only via
+        // setClientPreedit + the single updateUserInterface call below.
+        // Calling ic->updatePreedit() separately scheduled a second UI
+        // render that raced with the candidate panel render and tripped
+        // fcitx5's 'CommonCandidateList: invalid index' assertion (which
+        // killed fcitx5 from IOEventCallback).
+        int idx = list->globalCursorIndex();
+        if (idx >= 0 && idx < list->totalSize()) {
+            auto display = list->candidate(idx).text().toString();
+            fcitx::Text pre;
+            pre.append(display, {fcitx::TextFormatFlag::Underline,
+                                  fcitx::TextFormatFlag::HighLight});
+            ic->inputPanel().setClientPreedit(pre);
+        }
         ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     };
 
