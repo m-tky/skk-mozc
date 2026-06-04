@@ -673,20 +673,15 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
 
     using A = skk_mozc::dispatch::PanelAction;
     auto refresh_ui = [&]() {
-        // Mirror the focused candidate to the inline preedit but only via
-        // setClientPreedit + the single updateUserInterface call below.
-        // Calling ic->updatePreedit() separately scheduled a second UI
-        // render that raced with the candidate panel render and tripped
-        // fcitx5's 'CommonCandidateList: invalid index' assertion (which
-        // killed fcitx5 from IOEventCallback).
-        int idx = list->globalCursorIndex();
-        if (idx >= 0 && idx < list->totalSize()) {
-            auto display = list->candidate(idx).text().toString();
-            fcitx::Text pre;
-            pre.append(display, {fcitx::TextFormatFlag::Underline,
-                                  fcitx::TextFormatFlag::HighLight});
-            ic->inputPanel().setClientPreedit(pre);
-        }
+        // Updating the inline preedit on every navigation crashed fcitx5
+        // with 'CommonCandidateList: invalid index' near page boundaries
+        // (likely a fcitx5 5.1.19 bug — even bare setClientPreedit() races
+        // with the candidate-panel renderer). Until that's understood we
+        // keep the inline preedit at whatever was set on panel install and
+        // rely on the candidate panel's own focus highlight to show the
+        // user which row is active. The mirror DOES still happen on
+        // commit (via the candidate's select callback) and on install
+        // (so the first candidate is previewed before any nav).
         ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     };
 
