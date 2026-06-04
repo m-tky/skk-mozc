@@ -35,6 +35,11 @@ public:
     CallbackCandidateWord(fcitx::Text text,
                           std::function<void(fcitx::InputContext *)> cb)
         : fcitx::CandidateWord(std::move(text)), cb_(std::move(cb)) {}
+    CallbackCandidateWord(fcitx::Text text, fcitx::Text comment,
+                          std::function<void(fcitx::InputContext *)> cb)
+        : fcitx::CandidateWord(std::move(text)), cb_(std::move(cb)) {
+        setComment(std::move(comment));
+    }
     void select(fcitx::InputContext *ic) const override { cb_(ic); }
 
 private:
@@ -180,12 +185,42 @@ bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
         return true;
     }
 
-    // Repaint preedit using the refiner's view.
+    // Repaint preedit using the refiner's view. Split into three runs so the
+    // focused bunsetsu is rendered with HighLight on top of Underline.
     auto v = impl_->refiner->view();
     fcitx::Text pre;
-    pre.append(v.preedit_text, fcitx::TextFormatFlag::Underline);
-    // We can't easily byte-range a highlight without splitting; the visual
-    // distinction of focused bunsetsu is best handled by future enhancement.
+    auto sliceByChars = [&](int begin, int end) {
+        // Convert UTF-8 char range to a substring of v.preedit_text.
+        int idx = 0;
+        size_t byte_begin = 0, byte_end = v.preedit_text.size();
+        for (size_t i = 0; i < v.preedit_text.size();) {
+            if (idx == begin) byte_begin = i;
+            if (idx == end) { byte_end = i; break; }
+            unsigned char c =
+                static_cast<unsigned char>(v.preedit_text[i]);
+            size_t step = 1;
+            if ((c & 0x80) == 0)        step = 1;
+            else if ((c & 0xE0) == 0xC0) step = 2;
+            else if ((c & 0xF0) == 0xE0) step = 3;
+            else if ((c & 0xF8) == 0xF0) step = 4;
+            i += step;
+            ++idx;
+        }
+        return v.preedit_text.substr(byte_begin, byte_end - byte_begin);
+    };
+    if (v.focused_end_chars > v.focused_begin_chars) {
+        auto head = sliceByChars(0, v.focused_begin_chars);
+        auto mid  = sliceByChars(v.focused_begin_chars, v.focused_end_chars);
+        auto tail = sliceByChars(v.focused_end_chars, INT32_MAX);
+        if (!head.empty())
+            pre.append(head, fcitx::TextFormatFlag::Underline);
+        pre.append(mid, {fcitx::TextFormatFlag::Underline,
+                         fcitx::TextFormatFlag::HighLight});
+        if (!tail.empty())
+            pre.append(tail, fcitx::TextFormatFlag::Underline);
+    } else {
+        pre.append(v.preedit_text, fcitx::TextFormatFlag::Underline);
+    }
     ic->inputPanel().setClientPreedit(pre);
     ic->updatePreedit();
     keyEvent.filterAndAccept();
@@ -234,7 +269,9 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
     }
     auto merged = mergeCandidates(mi);
 
-    // Rebuild fcitx5 candidate list with the merged contents.
+    // Rebuild fcitx5 candidate list with the merged contents. Annotations
+    // (SKK ;-prefixed notes or mozc descriptions) go into the comment slot so
+    // fcitx5 renders them inline next to the candidate.
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
     for (const auto &c : merged) {
         fcitx::Text display(c.value);
@@ -243,12 +280,12 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
                 ictx->commitString(text);
                 this->recordCommit(yomi, text);
             };
-        fcitx_list->append<CallbackCandidateWord>(std::move(display),
-                                                  std::move(cb));
         if (!c.annotation.empty()) {
-            // Annotation goes onto the just-appended entry's comment slot via
-            // the public ModifiableCandidateList API.
-            // (Skipped in v0; see CLAUDE.md "オープン論点".)
+            fcitx_list->append<CallbackCandidateWord>(
+                std::move(display), fcitx::Text(c.annotation), std::move(cb));
+        } else {
+            fcitx_list->append<CallbackCandidateWord>(std::move(display),
+                                                      std::move(cb));
         }
     }
     ic->inputPanel().setCandidateList(std::move(fcitx_list));
