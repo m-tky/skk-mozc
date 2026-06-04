@@ -12,8 +12,10 @@
 #ifndef FCITX5_SKK_MOZC_INTEGRATION_H_
 #define FCITX5_SKK_MOZC_INTEGRATION_H_
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Forward-decl rather than #include fcitx5 headers so this file can be lifted
 // into a CLI build (no fcitx5 link needed) for unit tests.
@@ -62,6 +64,14 @@ public:
     // ~/.skk-jisyo). May be called at construction time or any time later;
     // a null pointer disables learning until set again.
     void setUserDict(SkkDict *user_dict);
+
+    // Provide an accessor for the engine's full dictionary list. The
+    // integration consults this in handleKey to merge libskk lookup results
+    // with mozc candidates BEFORE libskk consumes the SPC. The accessor may
+    // be called multiple times; return value should reflect the current
+    // engine state.
+    using DictAccessor = std::function<std::vector<SkkDict *>()>;
+    void setDictAccessor(DictAccessor accessor);
 
     // Called from the *top* of SkkState::keyEvent. Returns true if the
     // refinement sub-mode consumed the key (in which case the caller skips

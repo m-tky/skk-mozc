@@ -130,6 +130,7 @@ std::string libskkCurrentYomi(SkkContext *ctx) {
 struct MozcIntegration::Impl {
     SkkContext *libskk_ctx = nullptr;
     SkkDict *user_dict = nullptr;
+    MozcIntegration::DictAccessor dict_accessor;
     IntegrationOptions opts;
     std::shared_ptr<MozcClient> client;
     std::unique_ptr<Refiner> refiner;
@@ -171,20 +172,20 @@ void MozcIntegration::setUserDict(SkkDict *user_dict) {
     impl_->user_dict = user_dict;
 }
 
+void MozcIntegration::setDictAccessor(DictAccessor accessor) {
+    impl_->dict_accessor = std::move(accessor);
+}
+
 namespace {
 
-// Forward decl: defined below. Wires up our CommonCandidateList on the input
-// panel and marks the integration as panel-owning.
-void installMozcPanel(MozcIntegration::Impl *impl,
-                      fcitx::InputContext *ic,
-                      std::string yomi,
-                      MozcConversionResult mozc_out);
+// Forward decls (definitions follow).
 
-// Build a fresh fcitx5 panel from the given mozc result. Returns the list
-// pointer the caller can use to navigate immediately.
-fcitx::CommonCandidateList *
-buildPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
-           const std::string &yomi, const MozcConversionResult &mozc_out);
+// Install a CommonCandidateList from a merged candidate list and mark the
+// integration as panel-owning.
+void installMergedPanel(MozcIntegration::Impl *impl,
+                        fcitx::InputContext *ic,
+                        std::string yomi,
+                        std::vector<MergedCandidate> merged);
 
 // Tear down the mozc panel, optionally also clearing libskk's preedit (used
 // when we commit so libskk doesn't keep showing ▽yomi after we wrote text).
@@ -193,13 +194,12 @@ void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
 
 // ---- Implementations ----
 
-fcitx::CommonCandidateList *
-buildPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
-           const std::string &yomi, const MozcConversionResult &mozc_out) {
+void installMergedPanel(MozcIntegration::Impl *impl,
+                        fcitx::InputContext *ic,
+                        std::string yomi,
+                        std::vector<MergedCandidate> merged) {
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
-    fcitx_list->setPageSize(impl->opts.max_mozc_candidates > 9
-                                ? 9
-                                : impl->opts.max_mozc_candidates);
+    fcitx_list->setPageSize(9); // matches the digit-selection key mapping
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
     fcitx_list->setSelectionKey(fcitx::KeyList{
         fcitx::Key(FcitxKey_1), fcitx::Key(FcitxKey_2),
@@ -209,33 +209,26 @@ buildPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
         fcitx::Key(FcitxKey_9),
     });
 
-    // Each candidate's select() callback commits the surface text, learns it
-    // into ~/.skk-jisyo, and resets libskk so its preedit clears.
-    auto integration_self = impl;
-    for (const auto &c : mozc_out.top_candidates) {
+    for (const auto &c : merged) {
         std::string text = c.value;
-        std::string desc = c.description;
-        auto cb = [integration_self, text, yomi](fcitx::InputContext *ictx) {
+        std::string desc = c.annotation;
+        auto *self = impl;
+        auto cb = [self, text, yomi](fcitx::InputContext *ictx) {
             SKK_MOZC_LOG("panel: commit \"%s\" for yomi=\"%s\"",
                          text.c_str(), yomi.c_str());
             ictx->commitString(text);
-            // Push into the SKK user dict so future SKK lookups hit first.
-            if (integration_self->user_dict) {
+            if (self->user_dict) {
                 ::SkkCandidate *cand = skk_candidate_new(
-                    yomi.c_str(),
-                    static_cast<gboolean>(0),
-                    text.c_str(),
-                    nullptr,
-                    text.c_str());
+                    yomi.c_str(), static_cast<gboolean>(0),
+                    text.c_str(), nullptr, text.c_str());
                 if (cand) {
-                    if (skk_dict_select_candidate(
-                            integration_self->user_dict, cand)) {
-                        skk_dict_save(integration_self->user_dict, nullptr);
+                    if (skk_dict_select_candidate(self->user_dict, cand)) {
+                        skk_dict_save(self->user_dict, nullptr);
                     }
                     g_object_unref(cand);
                 }
             }
-            clearMozcPanel(integration_self, ictx, /*reset_libskk=*/true);
+            clearMozcPanel(self, ictx, /*reset_libskk=*/true);
         };
         if (!desc.empty()) {
             fcitx_list->append<CallbackCandidateWord>(
@@ -246,16 +239,7 @@ buildPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
         }
     }
     fcitx_list->setGlobalCursorIndex(0);
-    fcitx::CommonCandidateList *raw_ptr = fcitx_list.get();
     ic->inputPanel().setCandidateList(std::move(fcitx_list));
-    return raw_ptr;
-}
-
-void installMozcPanel(MozcIntegration::Impl *impl,
-                      fcitx::InputContext *ic,
-                      std::string yomi,
-                      MozcConversionResult mozc_out) {
-    (void)buildPanel(impl, ic, yomi, mozc_out);
     impl->panel_active = true;
     impl->panel_yomi = std::move(yomi);
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -381,6 +365,55 @@ bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
     return maybeOpenMozcPanel_(keyEvent, ic);
 }
 
+namespace {
+
+// A yomi is "clean" only if it contains no ASCII letters. SKK's romaji-to-
+// kana machine leaves trailing latin chars (e.g. "へんかn" while waiting for
+// the next vowel) on the preedit; running mozc on those yields garbage.
+bool yomiIsClean(const std::string &s) {
+    for (char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return false;
+    }
+    return true;
+}
+
+// Pull libskk's lookup results for `yomi` from every dictionary the engine
+// has. The first writable dict is treated as the personal dict so the merger
+// can pin its hits to slot 1.
+std::vector<SkkSideCandidate>
+lookupSkkCandidates(MozcIntegration::Impl *impl, const std::string &yomi) {
+    std::vector<SkkSideCandidate> out;
+    if (!impl->dict_accessor) return out;
+    auto dicts = impl->dict_accessor();
+    for (::SkkDict *dict : dicts) {
+        if (!dict) continue;
+        gint n = 0;
+        ::SkkCandidate **cands =
+            skk_dict_lookup(dict, yomi.c_str(),
+                            static_cast<gboolean>(0), &n);
+        if (!cands) continue;
+        for (gint i = 0; i < n; ++i) {
+            ::SkkCandidate *c = cands[i];
+            if (!c) continue;
+            SkkSideCandidate sc;
+            const gchar *text = skk_candidate_get_text(c);
+            sc.value = text ? text : "";
+            const gchar *ann = skk_candidate_get_annotation(c);
+            sc.annotation = ann ? ann : "";
+            sc.from_personal_dict =
+                (impl->user_dict != nullptr && dict == impl->user_dict);
+            if (!sc.value.empty()) {
+                out.push_back(std::move(sc));
+            }
+            g_object_unref(c);
+        }
+        g_free(cands);
+    }
+    return out;
+}
+
+} // namespace
+
 bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
                                           fcitx::InputContext *ic) {
     if (!impl_->client) return false;
@@ -392,20 +425,48 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
         SKK_MOZC_LOG("SPC: skip — not in ▽ mode or yomi too short");
         return false;
     }
-    SKK_MOZC_LOG("SPC: querying mozc with yomi=\"%s\"", yomi.c_str());
-    auto mozc_out = impl_->client->convert(yomi);
-    if (!mozc_out || mozc_out->top_candidates.empty()) {
-        SKK_MOZC_LOG("SPC: mozc returned nothing — falling through to libskk");
+    if (!yomiIsClean(yomi)) {
+        // SKK is mid-romaji (e.g. trailing 'n' waiting for a vowel). Let
+        // libskk handle SPC and finish kana conversion first.
+        SKK_MOZC_LOG("SPC: skip — yomi has pending romaji (\"%s\")",
+                     yomi.c_str());
         return false;
     }
-    SKK_MOZC_LOG("SPC: opening mozc panel (%zu candidates, %zu segments)",
-                 mozc_out->top_candidates.size(),
-                 mozc_out->segments.size());
-    installMozcPanel(impl_.get(), ic, yomi, *mozc_out);
 
-    // Optionally enter the bunsetsu refinement sub-mode for multi-segment
-    // conversions. Refinement re-uses the same panel-ownership lifecycle.
-    if (mozc_out->segments.size() >= 2) {
+    // Look up libskk's own candidates BEFORE consuming the key. We don't let
+    // libskk process SPC because that would transition it into ▼ mode and
+    // make state management nightmarish; instead we read the dicts directly.
+    auto skk_cands = lookupSkkCandidates(impl_.get(), yomi);
+
+    SKK_MOZC_LOG("SPC: querying mozc with yomi=\"%s\" (skk hits=%zu)",
+                 yomi.c_str(), skk_cands.size());
+    auto mozc_out = impl_->client->convert(yomi);
+    SKK_MOZC_LOG("SPC: mozc=%s top=%zu segs=%zu",
+                 mozc_out ? "ok" : "miss",
+                 mozc_out ? mozc_out->top_candidates.size() : 0,
+                 mozc_out ? mozc_out->segments.size() : 0);
+
+    // If neither SKK nor mozc returned anything useful, let libskk own the
+    // SPC (it'll likely enter register mode for the unknown yomi).
+    if (skk_cands.empty() &&
+        (!mozc_out || mozc_out->top_candidates.empty())) {
+        SKK_MOZC_LOG("SPC: nothing to show — deferring to libskk");
+        return false;
+    }
+
+    // Merge SKK + mozc candidates per the design ranking rules.
+    MergeInputs mi;
+    mi.skk_candidates = std::move(skk_cands);
+    if (mozc_out) {
+        mi.mozc_candidates = std::move(mozc_out->top_candidates);
+    }
+    auto merged = mergeCandidates(mi);
+    if (merged.empty()) return false;
+
+    SKK_MOZC_LOG("SPC: opening merged panel (%zu candidates)", merged.size());
+    installMergedPanel(impl_.get(), ic, yomi, std::move(merged));
+
+    if (mozc_out && mozc_out->segments.size() >= 2) {
         if (auto session = impl_->client->beginRefinement(yomi)) {
             impl_->refiner =
                 std::make_unique<Refiner>(std::move(session), yomi);
