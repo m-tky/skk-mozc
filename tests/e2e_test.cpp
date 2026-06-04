@@ -91,19 +91,25 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    // Install skk into the default input method group so
-    // setCurrentInputMethod("skk") has something to point at.
-    auto group = instance.inputMethodManager().currentGroup();
-    group.inputMethodList().clear();
-    group.inputMethodList().push_back(InputMethodGroupItem("keyboard-us"));
-    group.inputMethodList().push_back(InputMethodGroupItem("skk"));
-    group.setDefaultInputMethod("skk");
-    instance.inputMethodManager().setGroup(std::move(group));
+    // skk IM is registered later, inside the dispatcher, once the addon
+    // manager has fully initialised and the skk addon has registered its
+    // input method with InputMethodManager.
 
     int failures = 0;
 
     instance.eventDispatcher().schedule(
         [&instance, testfrontend, &failures]() {
+            // Install skk into the default input method group now that the
+            // addon manager has loaded the skk addon (which registered its
+            // IM with the InputMethodManager).
+            auto group = instance.inputMethodManager().currentGroup();
+            group.inputMethodList().clear();
+            group.inputMethodList().push_back(
+                InputMethodGroupItem("keyboard-us"));
+            group.inputMethodList().push_back(InputMethodGroupItem("skk"));
+            group.setDefaultInputMethod("skk");
+            instance.inputMethodManager().setGroup(std::move(group));
+
             auto uuid =
                 testfrontend->call<ITestFrontend::createInputContext>("e2e");
             auto *ic = instance.inputContextManager().findByUUID(uuid);
