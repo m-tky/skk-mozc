@@ -56,6 +56,7 @@ stdenv.mkDerivation (finalAttrs: {
     cp -r ${skkMozcSources}/mozc_client      src/mozc_client
     cp -r ${skkMozcSources}/candidate_merger src/candidate_merger
     cp -r ${skkMozcSources}/bunsetsu         src/bunsetsu
+    cp -r ${skkMozcSources}/log              src/log
     cp -r ${skkMozcSources}/skk_integration  src/skk_integration
 
     mkdir -p src/proto/protocol src/proto/ipc
