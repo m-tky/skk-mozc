@@ -108,6 +108,10 @@ RefinerView Refiner::view() const {
     return v;
 }
 
+const MozcConversionResult &Refiner::currentResult() const {
+    return session_->current();
+}
+
 std::optional<RefinerCommit> Refiner::commit() {
     if (!done_ || aborted_ || !session_) return std::nullopt;
     RefinerCommit c;

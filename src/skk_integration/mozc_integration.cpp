@@ -359,15 +359,14 @@ void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
 
 bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
                                         fcitx::InputContext *ic) {
+    // Only refinement-only keys reach this function (decideRoute() gates):
+    // Tab / Shift+Tab move bunsetsu focus, Shift+←/→ shrink/grow it. The
+    // refiner does the IPC to mozc; on success we re-install the panel
+    // from the new MozcConversionResult so the focused candidate updates.
     const auto &key = keyEvent.key();
     std::optional<RefinerAction> act;
-    if (key.check(FcitxKey_Escape) ||
-        (key.check(FcitxKey_g, fcitx::KeyState::Ctrl))) {
-        act = RefinerAction::Abort;
-    } else if (key.check(FcitxKey_Return)) {
-        act = RefinerAction::Commit;
-    } else if (key.check(FcitxKey_Tab) &&
-               !key.states().test(fcitx::KeyState::Shift)) {
+    if (key.check(FcitxKey_Tab) &&
+        !key.states().test(fcitx::KeyState::Shift)) {
         act = RefinerAction::FocusNextSegment;
     } else if (key.check(FcitxKey_Tab, fcitx::KeyState::Shift) ||
                key.check(FcitxKey_ISO_Left_Tab)) {
@@ -376,72 +375,33 @@ bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
         act = RefinerAction::ShrinkSegment;
     } else if (key.check(FcitxKey_Right, fcitx::KeyState::Shift)) {
         act = RefinerAction::GrowSegment;
-    } else if (key.check(FcitxKey_space)) {
-        act = RefinerAction::NextCandidate;
-    } else if (key.check(FcitxKey_space, fcitx::KeyState::Shift)) {
-        act = RefinerAction::PrevCandidate;
     }
-    if (!act) {
-        return false;
-    }
+    if (!act) return false;
 
     impl_->refiner->dispatch(*act);
     if (impl_->refiner->done()) {
-        if (impl_->refiner->aborted()) {
-            // Drop the refiner, let SKK ▽ resume from its own state.
-            impl_->refiner.reset();
-            keyEvent.filterAndAccept();
-            return true;
-        }
-        if (auto c = impl_->refiner->commit()) {
-            ic->commitString(c->text);
-            for (const auto &[yomi, surface] : c->learn_entries) {
-                recordCommit(yomi, surface);
-            }
-        }
+        // Refinement-only keys never trigger done()/aborted, but bail
+        // defensively if something else has set those flags.
         impl_->refiner.reset();
         keyEvent.filterAndAccept();
         return true;
     }
 
-    // Repaint preedit using the refiner's view. Split into three runs so the
-    // focused bunsetsu is rendered with HighLight on top of Underline.
-    auto v = impl_->refiner->view();
-    fcitx::Text pre;
-    auto sliceByChars = [&](int begin, int end) {
-        // Convert UTF-8 char range to a substring of v.preedit_text.
-        int idx = 0;
-        size_t byte_begin = 0, byte_end = v.preedit_text.size();
-        for (size_t i = 0; i < v.preedit_text.size();) {
-            if (idx == begin) byte_begin = i;
-            if (idx == end) { byte_end = i; break; }
-            unsigned char c =
-                static_cast<unsigned char>(v.preedit_text[i]);
-            size_t step = 1;
-            if ((c & 0x80) == 0)        step = 1;
-            else if ((c & 0xE0) == 0xC0) step = 2;
-            else if ((c & 0xF0) == 0xE0) step = 3;
-            else if ((c & 0xF8) == 0xF0) step = 4;
-            i += step;
-            ++idx;
-        }
-        return v.preedit_text.substr(byte_begin, byte_end - byte_begin);
-    };
-    if (v.focused_end_chars > v.focused_begin_chars) {
-        auto head = sliceByChars(0, v.focused_begin_chars);
-        auto mid  = sliceByChars(v.focused_begin_chars, v.focused_end_chars);
-        auto tail = sliceByChars(v.focused_end_chars, INT32_MAX);
-        if (!head.empty())
-            pre.append(head, fcitx::TextFormatFlag::Underline);
-        pre.append(mid, {fcitx::TextFormatFlag::Underline,
-                         fcitx::TextFormatFlag::HighLight});
-        if (!tail.empty())
-            pre.append(tail, fcitx::TextFormatFlag::Underline);
-    } else {
-        pre.append(v.preedit_text, fcitx::TextFormatFlag::Underline);
+    // Rebuild the panel from the refiner's updated mozc state. The new
+    // segment concatenation becomes the focused (top) candidate; existing
+    // SKK system-dict hits for the original yomi stay underneath them.
+    const auto &refined = impl_->refiner->currentResult();
+    std::string yomi = impl_->panel_yomi;
+    std::vector<SkkSideCandidate> skk_cands =
+        lookupSkkCandidates(impl_.get(), yomi);
+    MergeInputs mi;
+    mi.skk_candidates = std::move(skk_cands);
+    mi.mozc_candidates = refined.top_candidates;
+    auto merged = mergeCandidates(mi);
+    if (!merged.empty()) {
+        installMergedPanel(impl_.get(), ic, yomi, std::move(merged),
+                           refined.segments);
     }
-    ic->inputPanel().setClientPreedit(pre);
-    ic->updatePreedit();
     keyEvent.filterAndAccept();
     return true;
 }
@@ -586,18 +546,21 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
 
     SKK_MOZC_LOG("SPC: opening merged panel (%zu candidates)", merged.size());
     std::vector<MozcSegment> segs;
-    if (mozc_out) segs = std::move(mozc_out->segments);
-    installMergedPanel(impl_.get(), ic, yomi, std::move(merged),
-                       std::move(segs));
+    if (mozc_out) segs = mozc_out->segments;
+    installMergedPanel(impl_.get(), ic, yomi, std::move(merged), segs);
 
-    // Refinement sub-mode (Shift+Arrow / Tab to tweak bunsetsu boundaries)
-    // is disabled in v1: it shared the ENTER/SPACE keys with the panel and
-    // produced a second, competing commit (Refiner's segment-by-segment
-    // concatenation vs. the panel's full-sentence top candidate). That
-    // looked to the user as two pasted strings, one of which was wrong.
-    // We will re-introduce it once we have a clean key-routing split so
-    // the two UIs don't both claim Enter.
-    (void)mozc_out;
+    // Refinement sub-mode: arm a live mozc session so Shift+←/→ + Tab can
+    // re-segment the conversion. By design only those four keys reach the
+    // refiner — Enter / Space / digits / Esc stay with the panel — so the
+    // double-commit regression (see panel_dispatch_test REGRESSION cases)
+    // cannot recur.
+    if (mozc_out && segs.size() >= 2 && impl_->client) {
+        if (auto session = impl_->client->beginRefinement(yomi)) {
+            impl_->refiner =
+                std::make_unique<Refiner>(std::move(session), yomi);
+            SKK_MOZC_LOG("SPC: refinement sub-mode armed");
+        }
+    }
     keyEvent.filterAndAccept();
     return true;
 }
@@ -627,6 +590,18 @@ skk_mozc::dispatch::PanelKey classifyPanelKey(
     if (k.check(FcitxKey_Escape))                      return PK::Escape;
     if (k.check(FcitxKey_g, fcitx::KeyState::Ctrl))    return PK::CtrlG;
     if (k.check(FcitxKey_Return))                      return PK::Enter;
+    // Refinement-only keys must come BEFORE plain Space/Down/Up so the
+    // modifier check has a chance to match.
+    if (k.check(FcitxKey_Left, fcitx::KeyState::Shift))
+        return PK::RefineShrink;
+    if (k.check(FcitxKey_Right, fcitx::KeyState::Shift))
+        return PK::RefineGrow;
+    if (k.check(FcitxKey_Tab) &&
+        !k.states().test(fcitx::KeyState::Shift))
+        return PK::RefineFocusNext;
+    if (k.check(FcitxKey_Tab, fcitx::KeyState::Shift) ||
+        k.check(FcitxKey_ISO_Left_Tab))
+        return PK::RefineFocusPrev;
     if (k.check(FcitxKey_space))                       return PK::Space;
     if (k.check(FcitxKey_Down))                        return PK::Down;
     if (k.check(FcitxKey_Up))                          return PK::Up;

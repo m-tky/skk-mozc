@@ -227,6 +227,25 @@ int main() {
         {"REGRESSION: panel + refiner + Up/Down/PageUp/PageDown → PanelDispatch",
          {/*panel*/true, /*refiner*/true},
          dp::PanelKey::Up, dp::RouteTarget::PanelDispatch},
+
+        // --- Refinement keys do reach RefinerDispatch when armed ---
+        {"panel + refiner + Shift+← (RefineShrink) → RefinerDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::RefineShrink, dp::RouteTarget::RefinerDispatch},
+        {"panel + refiner + Shift+→ (RefineGrow) → RefinerDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::RefineGrow, dp::RouteTarget::RefinerDispatch},
+        {"panel + refiner + Tab (RefineFocusNext) → RefinerDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::RefineFocusNext, dp::RouteTarget::RefinerDispatch},
+        {"panel + refiner + Shift+Tab (RefineFocusPrev) → RefinerDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::RefineFocusPrev, dp::RouteTarget::RefinerDispatch},
+
+        // --- Without refiner, refinement keys are silently ignored ---
+        {"panel without refiner + RefineShrink → PanelDispatch (Ignore)",
+         {/*panel*/true, /*refiner*/false},
+         dp::PanelKey::RefineShrink, dp::RouteTarget::PanelDispatch},
     };
 
     int route_pass = 0, route_fail = 0;

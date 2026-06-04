@@ -83,6 +83,11 @@ public:
     // to register into the SKK personal dict.
     std::optional<RefinerCommit> commit();
 
+    // Current mozc-side conversion result; used by mozc_integration to
+    // rebuild the panel after each refinement key so the user sees the
+    // new segmentation as the focused candidate.
+    const MozcConversionResult &currentResult() const;
+
 private:
     std::unique_ptr<RefinementSession> session_;
     std::string original_yomi_;

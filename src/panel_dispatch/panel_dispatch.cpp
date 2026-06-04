@@ -82,6 +82,17 @@ PanelDecision decidePanelAction(PanelKey k,
         }
         return out;
 
+    case PanelKey::RefineShrink:
+    case PanelKey::RefineGrow:
+    case PanelKey::RefineFocusNext:
+    case PanelKey::RefineFocusPrev:
+        // Refinement keys reach this function only when the refiner is NOT
+        // armed (decideRoute would otherwise hand them to RefinerDispatch).
+        // We just consume them silently so an accidental Shift+Arrow
+        // doesn't tear down the panel.
+        out.action = PanelAction::Ignore;
+        return out;
+
     default:
         // (fall through to the Other branch below)
         if (isDigit(k)) {
@@ -97,12 +108,15 @@ PanelDecision decidePanelAction(PanelKey k,
 }
 
 bool isRefinementKey(PanelKey key) {
-    // The PanelKey enum currently has no explicit slot for refinement-only
-    // keys (Shift+Arrow / Tab). When the refinement sub-mode is re-added
-    // we'll add e.g. RefineFocusNext / RefineShrink members here. For now
-    // nothing qualifies, so the panel always wins.
-    (void)key;
-    return false;
+    switch (key) {
+    case PanelKey::RefineShrink:
+    case PanelKey::RefineGrow:
+    case PanelKey::RefineFocusNext:
+    case PanelKey::RefineFocusPrev:
+        return true;
+    default:
+        return false;
+    }
 }
 
 RouteTarget decideRoute(const RouteState &state, PanelKey key) {

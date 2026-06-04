@@ -35,6 +35,11 @@ enum class PanelKey {
     PageDown,
     Digit1, Digit2, Digit3, Digit4, Digit5,
     Digit6, Digit7, Digit8, Digit9,
+    // Refinement-only keys. Routed to RefinerDispatch when refiner_armed.
+    RefineShrink,    // Shift+← : shrink focused bunsetsu
+    RefineGrow,      // Shift+→ : grow focused bunsetsu
+    RefineFocusNext, // Tab     : move attention to next bunsetsu
+    RefineFocusPrev, // Shift+Tab : previous bunsetsu
 };
 
 enum class PanelAction {
