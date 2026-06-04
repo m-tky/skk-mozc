@@ -81,8 +81,23 @@ public:
     void recordCommit(const std::string &yomi,
                       const std::string &surface);
 
-private:
+public:
+    // Exposed so the helpers in the .cpp can reach Impl. Treat as private
+    // outside the .cpp.
     struct Impl;
+
+private:
+    // Sub-routers for handleKey(). Each returns true iff the event was
+    // consumed.
+    bool handleRefinerKey_(fcitx::KeyEvent &keyEvent,
+                           fcitx::InputContext *ic);
+    bool handlePanelKey_(fcitx::KeyEvent &keyEvent,
+                         fcitx::InputContext *ic);
+    // Pre-libskk SPC interception: opens a mozc-owned panel if the current
+    // ▽ yomi is suitable for mozc augmentation. Returns true iff opened.
+    bool maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
+                             fcitx::InputContext *ic);
+
     std::unique_ptr<Impl> impl_;
 };
 

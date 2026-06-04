@@ -133,6 +133,13 @@ struct MozcIntegration::Impl {
     IntegrationOptions opts;
     std::shared_ptr<MozcClient> client;
     std::unique_ptr<Refiner> refiner;
+
+    // Mozc-driven candidate panel state. While `panel_active` is true the
+    // input panel's candidate list is owned by this integration (not libskk),
+    // and every navigation / selection / cancel key is routed through
+    // handlePanelKey. Cleared on commit, ESC, or any non-handled key.
+    bool panel_active = false;
+    std::string panel_yomi;
 };
 
 MozcIntegration::MozcIntegration(SkkContext *libskk_context,
@@ -164,11 +171,115 @@ void MozcIntegration::setUserDict(SkkDict *user_dict) {
     impl_->user_dict = user_dict;
 }
 
-bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
-                                fcitx::InputContext *ic) {
-    if (!impl_->refiner || impl_->refiner->done()) {
-        return false;
+namespace {
+
+// Forward decl: defined below. Wires up our CommonCandidateList on the input
+// panel and marks the integration as panel-owning.
+void installMozcPanel(MozcIntegration::Impl *impl,
+                      fcitx::InputContext *ic,
+                      std::string yomi,
+                      MozcConversionResult mozc_out);
+
+// Build a fresh fcitx5 panel from the given mozc result. Returns the list
+// pointer the caller can use to navigate immediately.
+fcitx::CommonCandidateList *
+buildPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
+           const std::string &yomi, const MozcConversionResult &mozc_out);
+
+// Tear down the mozc panel, optionally also clearing libskk's preedit (used
+// when we commit so libskk doesn't keep showing ▽yomi after we wrote text).
+void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
+                    bool reset_libskk);
+
+// ---- Implementations ----
+
+fcitx::CommonCandidateList *
+buildPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
+           const std::string &yomi, const MozcConversionResult &mozc_out) {
+    auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
+    fcitx_list->setPageSize(impl->opts.max_mozc_candidates > 9
+                                ? 9
+                                : impl->opts.max_mozc_candidates);
+    fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
+    fcitx_list->setSelectionKey(fcitx::KeyList{
+        fcitx::Key(FcitxKey_1), fcitx::Key(FcitxKey_2),
+        fcitx::Key(FcitxKey_3), fcitx::Key(FcitxKey_4),
+        fcitx::Key(FcitxKey_5), fcitx::Key(FcitxKey_6),
+        fcitx::Key(FcitxKey_7), fcitx::Key(FcitxKey_8),
+        fcitx::Key(FcitxKey_9),
+    });
+
+    // Each candidate's select() callback commits the surface text, learns it
+    // into ~/.skk-jisyo, and resets libskk so its preedit clears.
+    auto integration_self = impl;
+    for (const auto &c : mozc_out.top_candidates) {
+        std::string text = c.value;
+        std::string desc = c.description;
+        auto cb = [integration_self, text, yomi](fcitx::InputContext *ictx) {
+            SKK_MOZC_LOG("panel: commit \"%s\" for yomi=\"%s\"",
+                         text.c_str(), yomi.c_str());
+            ictx->commitString(text);
+            // Push into the SKK user dict so future SKK lookups hit first.
+            if (integration_self->user_dict) {
+                ::SkkCandidate *cand = skk_candidate_new(
+                    yomi.c_str(),
+                    static_cast<gboolean>(0),
+                    text.c_str(),
+                    nullptr,
+                    text.c_str());
+                if (cand) {
+                    if (skk_dict_select_candidate(
+                            integration_self->user_dict, cand)) {
+                        skk_dict_save(integration_self->user_dict, nullptr);
+                    }
+                    g_object_unref(cand);
+                }
+            }
+            clearMozcPanel(integration_self, ictx, /*reset_libskk=*/true);
+        };
+        if (!desc.empty()) {
+            fcitx_list->append<CallbackCandidateWord>(
+                fcitx::Text(text), fcitx::Text(desc), std::move(cb));
+        } else {
+            fcitx_list->append<CallbackCandidateWord>(
+                fcitx::Text(text), std::move(cb));
+        }
     }
+    fcitx_list->setGlobalCursorIndex(0);
+    fcitx::CommonCandidateList *raw_ptr = fcitx_list.get();
+    ic->inputPanel().setCandidateList(std::move(fcitx_list));
+    return raw_ptr;
+}
+
+void installMozcPanel(MozcIntegration::Impl *impl,
+                      fcitx::InputContext *ic,
+                      std::string yomi,
+                      MozcConversionResult mozc_out) {
+    (void)buildPanel(impl, ic, yomi, mozc_out);
+    impl->panel_active = true;
+    impl->panel_yomi = std::move(yomi);
+    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+}
+
+void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
+                    bool reset_libskk) {
+    impl->panel_active = false;
+    impl->panel_yomi.clear();
+    impl->refiner.reset();
+    ic->inputPanel().reset();
+    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    if (reset_libskk && impl->libskk_ctx) {
+        // Drop libskk's ▽ preedit so the application doesn't see a phantom
+        // yomi after our commit.
+        skk_context_reset(impl->libskk_ctx);
+        ic->updatePreedit();
+    }
+}
+
+} // namespace
+
+bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
+                                        fcitx::InputContext *ic) {
     const auto &key = keyEvent.key();
     std::optional<RefinerAction> act;
     if (key.check(FcitxKey_Escape) ||
@@ -256,70 +367,155 @@ bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
     return true;
 }
 
+bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
+                                fcitx::InputContext *ic) {
+    // 1. Bunsetsu refinement sub-mode wins everything.
+    if (impl_->refiner && !impl_->refiner->done()) {
+        return handleRefinerKey_(keyEvent, ic);
+    }
+    // 2. If we already own the panel, route the key through panel control.
+    if (impl_->panel_active) {
+        return handlePanelKey_(keyEvent, ic);
+    }
+    // 3. Otherwise watch for SPC in ▽ mode to potentially open the panel.
+    return maybeOpenMozcPanel_(keyEvent, ic);
+}
+
+bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
+                                          fcitx::InputContext *ic) {
+    if (!impl_->client) return false;
+    if (keyEvent.isRelease()) return false;
+    if (!keyEvent.key().check(FcitxKey_space)) return false;
+
+    std::string yomi = libskkCurrentYomi(impl_->libskk_ctx);
+    if (yomi.empty() || utf8Chars(yomi) < kMinYomiCharsForMozc) {
+        SKK_MOZC_LOG("SPC: skip — not in ▽ mode or yomi too short");
+        return false;
+    }
+    SKK_MOZC_LOG("SPC: querying mozc with yomi=\"%s\"", yomi.c_str());
+    auto mozc_out = impl_->client->convert(yomi);
+    if (!mozc_out || mozc_out->top_candidates.empty()) {
+        SKK_MOZC_LOG("SPC: mozc returned nothing — falling through to libskk");
+        return false;
+    }
+    SKK_MOZC_LOG("SPC: opening mozc panel (%zu candidates, %zu segments)",
+                 mozc_out->top_candidates.size(),
+                 mozc_out->segments.size());
+    installMozcPanel(impl_.get(), ic, yomi, *mozc_out);
+
+    // Optionally enter the bunsetsu refinement sub-mode for multi-segment
+    // conversions. Refinement re-uses the same panel-ownership lifecycle.
+    if (mozc_out->segments.size() >= 2) {
+        if (auto session = impl_->client->beginRefinement(yomi)) {
+            impl_->refiner =
+                std::make_unique<Refiner>(std::move(session), yomi);
+            SKK_MOZC_LOG("SPC: refinement sub-mode armed");
+        }
+    }
+    keyEvent.filterAndAccept();
+    return true;
+}
+
+bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
+                                      fcitx::InputContext *ic) {
+    if (keyEvent.isRelease()) return false;
+    auto *raw = ic->inputPanel().candidateList().get();
+    auto *list = dynamic_cast<fcitx::CommonCandidateList *>(raw);
+    if (!list) {
+        impl_->panel_active = false;
+        return false;
+    }
+    const auto &key = keyEvent.key();
+
+    // ESC / Ctrl+G: cancel mozc augmentation, leave libskk in its ▽ state.
+    if (key.check(FcitxKey_Escape) ||
+        key.check(FcitxKey_g, fcitx::KeyState::Ctrl)) {
+        SKK_MOZC_LOG("panel: ESC — cancelling, restoring SKK ▽");
+        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
+        keyEvent.filterAndAccept();
+        return true;
+    }
+
+    // Enter: commit the currently focused candidate.
+    if (key.check(FcitxKey_Return)) {
+        int idx = list->globalCursorIndex();
+        if (idx < 0) idx = 0;
+        if (idx < list->totalSize()) {
+            list->candidate(idx).select(ic);
+        }
+        keyEvent.filterAndAccept();
+        return true;
+    }
+
+    // SPC / Down: next candidate. Up: previous.
+    if (key.check(FcitxKey_space) || key.check(FcitxKey_Down)) {
+        list->nextCandidate();
+        ic->updateUserInterface(
+            fcitx::UserInterfaceComponent::InputPanel);
+        keyEvent.filterAndAccept();
+        return true;
+    }
+    if (key.check(FcitxKey_Up)) {
+        list->prevCandidate();
+        ic->updateUserInterface(
+            fcitx::UserInterfaceComponent::InputPanel);
+        keyEvent.filterAndAccept();
+        return true;
+    }
+
+    // PageUp / PageDown.
+    if (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Prior)) {
+        if (list->hasPrev()) {
+            list->prev();
+            ic->updateUserInterface(
+                fcitx::UserInterfaceComponent::InputPanel);
+        }
+        keyEvent.filterAndAccept();
+        return true;
+    }
+    if (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Next)) {
+        if (list->hasNext()) {
+            list->next();
+            ic->updateUserInterface(
+                fcitx::UserInterfaceComponent::InputPanel);
+        }
+        keyEvent.filterAndAccept();
+        return true;
+    }
+
+    // Digit 1-9, 0: direct selection on the current page.
+    static const std::array<fcitx::KeySym, 10> kDigits = {
+        FcitxKey_1, FcitxKey_2, FcitxKey_3, FcitxKey_4, FcitxKey_5,
+        FcitxKey_6, FcitxKey_7, FcitxKey_8, FcitxKey_9, FcitxKey_0,
+    };
+    for (size_t i = 0; i < kDigits.size(); ++i) {
+        if (key.check(kDigits[i])) {
+            int page_start = list->currentPage() * list->pageSize();
+            int idx = page_start + static_cast<int>(i);
+            if (idx < list->totalSize()) {
+                list->candidate(idx).select(ic);
+            }
+            keyEvent.filterAndAccept();
+            return true;
+        }
+    }
+
+    // Any other key: cancel the panel and let libskk see the key. This
+    // matches Mozc's UX where typing a non-navigation key abandons the
+    // current conversion.
+    SKK_MOZC_LOG("panel: unhandled key — cancelling, deferring to libskk");
+    clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
+    return false;
+}
+
 void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
                                         SkkCandidateList *libskk_candidates) {
-    if (!impl_->client || !libskk_candidates) {
-        return;
-    }
-    if (!skk_candidate_list_get_page_visible(libskk_candidates)) {
-        return;
-    }
-    std::string yomi = libskkCurrentYomi(impl_->libskk_ctx);
-    if (utf8Chars(yomi) < kMinYomiCharsForMozc) {
-        SKK_MOZC_LOG("augment: skip — yomi too short (%zu bytes)", yomi.size());
-        return;
-    }
-
-    SKK_MOZC_LOG("augment: yomi=\"%s\"", yomi.c_str());
-    auto mozc_out = impl_->client->convert(yomi);
-    SKK_MOZC_LOG("augment: mozc=%s top=%zu segs=%zu",
-                 mozc_out ? "ok" : "miss",
-                 mozc_out ? mozc_out->top_candidates.size() : 0,
-                 mozc_out ? mozc_out->segments.size() : 0);
-
-    // Build SKK candidate snapshot. libskk doesn't tag entries by source dict,
-    // so we approximate "from personal dict" via index < N where N is the
-    // number of personal-dict matches; libskk presents personal-dict hits
-    // first by convention.
-    std::vector<SkkSideCandidate> skk_side;
-    gint size = skk_candidate_list_get_size(libskk_candidates);
-    for (gint i = 0; i < size; ++i) {
-        SkkSideCandidate sc;
-        ::SkkCandidate *raw = skk_candidate_list_get(libskk_candidates, i);
-        if (!raw) continue;
-        const gchar *text = skk_candidate_get_text(raw);
-        sc.value = text ? text : "";
-        const gchar *ann = skk_candidate_get_annotation(raw);
-        sc.annotation = ann ? ann : "";
-        // libskk does not surface a "from personal dict" flag in its public
-        // API; conservatively mark the first entry as personal-dict-priority.
-        sc.from_personal_dict = (i == 0);
-        skk_side.push_back(std::move(sc));
-    }
-
-    MergeInputs mi;
-    mi.skk_candidates = std::move(skk_side);
-    if (mozc_out) {
-        mi.mozc_candidates = std::move(mozc_out->top_candidates);
-    }
-    auto merged = mergeCandidates(mi);
-
-    // v0 architectural-fix safety: do NOT replace libskk's candidate panel.
-    // Replacing it caused a split where libskk-driven selection (handleCandidate
-    // in skk.cpp) picked from libskk's internal list while users saw OUR list,
-    // producing commits that didn't match the display.
-    //
-    // Until the SPC-intercept rewrite (next phase) properly takes over both
-    // candidate display AND selection, we only LOG what mozc would have
-    // contributed. SKK's native UI is left untouched.
-    (void)merged;
+    // No-op in the new design. Mozc augmentation is now driven entirely from
+    // the SPC-intercept path in maybeOpenMozcPanel_, before libskk has a
+    // chance to react. Leaving this stub keeps the patched skk.cpp call site
+    // unchanged so a future bump can reuse it.
     (void)ic;
-    SKK_MOZC_LOG("augment: log-only mode — %zu merged candidates would be shown",
-                 merged.size());
-
-    // Refinement sub-mode is also gated off in this safety mode; it depends
-    // on us owning the panel.
-    (void)mozc_out;
+    (void)libskk_candidates;
 }
 
 void MozcIntegration::recordCommit(const std::string &yomi,
