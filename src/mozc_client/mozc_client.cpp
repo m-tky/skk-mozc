@@ -240,6 +240,7 @@ MozcClient::convert(const std::string &yomi) {
     if (yomi.empty() || !reachable_) {
         return std::nullopt;
     }
+    SKK_MOZC_LOG("convert: yomi=\"%s\"", yomi.c_str());
     if (!ensureServerReachable(*impl_, options_)) {
         reachable_ = false;
         return std::nullopt;
