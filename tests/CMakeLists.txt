@@ -51,6 +51,9 @@ if(SKK_MOZC_BUILD_E2E)
 
     add_executable(skk-mozc-e2e-test
         e2e_test.cpp)
+    set_target_properties(skk-mozc-e2e-test PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON)
     target_include_directories(skk-mozc-e2e-test PRIVATE
         "${SKK_MOZC_FCITX5_INCLUDE_DIR}")
     target_link_libraries(skk-mozc-e2e-test PRIVATE
