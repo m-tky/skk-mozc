@@ -68,7 +68,7 @@ index 5a84eaa..2976a0b 100644
  set_target_properties(skk PROPERTIES PREFIX "")
  install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
 diff --git a/src/skk.cpp b/src/skk.cpp
-index 19b564b..493def3 100644
+index 19b564b..aa9638c 100644
 --- a/src/skk.cpp
 +++ b/src/skk.cpp
 @@ -48,6 +48,7 @@
@@ -114,7 +114,7 @@ index 19b564b..493def3 100644
      if (handleCandidate(keyEvent)) {
          return;
      }
-@@ -731,6 +753,9 @@ void SkkState::updateUI() {
+@@ -731,7 +753,15 @@ void SkkState::updateUI() {
      std::unique_ptr<SkkFcitxCandidateList> candidateList;
      if (skk_candidate_list_get_page_visible(skkCandidates)) {
          candidateList = std::make_unique<SkkFcitxCandidateList>(engine_, ic_);
@@ -122,8 +122,29 @@ index 19b564b..493def3 100644
 +            mozc_integration_->augmentCandidates(ic_, skkCandidates);
 +        }
      }
++    // If the mozc panel currently owns the candidate slot, leave the input
++    // panel alone — overwriting it with a libskk list (or with the
++    // unconditional reset() below) would clobber what we just installed.
++    const bool mozc_owns_panel =
++        mozc_integration_ && mozc_integration_->ownsCandidatePanel();
  
      if (auto str = UniqueCPtr<char, g_free>{skk_context_poll_output(context)}) {
+         if (str && str.get()[0]) {
+@@ -761,9 +791,11 @@ void SkkState::updateUI() {
+         return;
+     }
+ 
+-    inputPanel.reset();
+-    if (candidateList) {
+-        inputPanel.setCandidateList(std::move(candidateList));
++    if (!mozc_owns_panel) {
++        inputPanel.reset();
++        if (candidateList) {
++            inputPanel.setCandidateList(std::move(candidateList));
++        }
+     }
+ 
+     if (ic_->capabilityFlags().test(CapabilityFlag::Preedit)) {
 diff --git a/src/skk.h b/src/skk.h
 index ff5d874..086818b 100644
 --- a/src/skk.h

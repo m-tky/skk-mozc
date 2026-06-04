@@ -151,6 +151,10 @@ void MozcIntegration::setUserDict(SkkDict *user_dict) {
     impl_->user_dict = user_dict;
 }
 
+bool MozcIntegration::ownsCandidatePanel() const {
+    return impl_->panel_active;
+}
+
 void MozcIntegration::setDictAccessor(DictAccessor accessor) {
     impl_->dict_accessor = std::move(accessor);
 }

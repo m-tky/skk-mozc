@@ -91,6 +91,12 @@ public:
     void recordCommit(const std::string &yomi,
                       const std::string &surface);
 
+    // True while the mozc-driven panel owns the candidate-list slot of the
+    // input panel. Patched skk.cpp's updateUI() checks this so it does not
+    // reset() the panel out from under us when libskk emits a stray
+    // notify::preedit between our setCandidateList() and the user's next key.
+    bool ownsCandidatePanel() const;
+
 public:
     // Exposed so the helpers in the .cpp can reach Impl. Treat as private
     // outside the .cpp.
