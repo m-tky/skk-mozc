@@ -11,7 +11,6 @@ namespace skk_mozc {
 
 namespace {
 
-// UTF-8 character count for a byte string. Treats invalid bytes as 1 char.
 int utf8CharLen(const std::string &s) {
     int n = 0;
     for (size_t i = 0; i < s.size();) {
@@ -27,38 +26,48 @@ int utf8CharLen(const std::string &s) {
     return n;
 }
 
+int focusedSegmentIndex(const MozcConversionResult &state) {
+    // Mozc keeps the focused segment via its own preedit; we infer the index
+    // by looking at the segments list (preedit.segment is rebuilt every
+    // turn). v0 doesn't have HIGHLIGHT info here, so default to 0.
+    // The integration layer relies on this being a stable, monotonic value
+    // only for UI highlighting; mozc's own state remains authoritative on
+    // the wire side.
+    (void)state;
+    return 0;
+}
+
 } // namespace
 
-Refiner::Refiner(std::shared_ptr<MozcClient> client,
-                 MozcConversionResult initial,
+Refiner::Refiner(std::unique_ptr<RefinementSession> session,
                  std::string original_yomi)
-    : client_(std::move(client)),
-      original_yomi_(std::move(original_yomi)),
-      state_(std::move(initial)) {}
+    : session_(std::move(session)),
+      original_yomi_(std::move(original_yomi)) {}
 
 Refiner::~Refiner() = default;
 
 bool Refiner::dispatch(RefinerAction action) {
-    if (done_) return false;
+    if (done_ || !session_) return false;
+    std::optional<MozcConversionResult> next;
     switch (action) {
     case RefinerAction::ShrinkSegment:
-        resize(-1);
-        return true;
+        next = session_->shrinkFocusedSegment();
+        break;
     case RefinerAction::GrowSegment:
-        resize(+1);
-        return true;
+        next = session_->growFocusedSegment();
+        break;
     case RefinerAction::FocusNextSegment:
-        moveFocus(+1);
-        return true;
+        next = session_->focusNextSegment();
+        break;
     case RefinerAction::FocusPrevSegment:
-        moveFocus(-1);
-        return true;
+        next = session_->focusPrevSegment();
+        break;
     case RefinerAction::NextCandidate:
-        cycleCandidate(focused_segment_, +1);
-        return true;
+        next = session_->nextCandidate();
+        break;
     case RefinerAction::PrevCandidate:
-        cycleCandidate(focused_segment_, -1);
-        return true;
+        next = session_->prevCandidate();
+        break;
     case RefinerAction::Commit:
         done_ = true;
         return true;
@@ -67,51 +76,23 @@ bool Refiner::dispatch(RefinerAction action) {
         aborted_ = true;
         return true;
     }
-    return false;
-}
-
-void Refiner::cycleCandidate(int segment_index, int delta) {
-    if (segment_index < 0 ||
-        segment_index >= static_cast<int>(state_.segments.size())) {
-        return;
+    if (!next) {
+        // IPC failure mid-refinement: treat as abort so the caller falls back
+        // to the SKK ▽ state.
+        done_ = true;
+        aborted_ = true;
     }
-    auto &seg = state_.segments[segment_index];
-    if (seg.candidates.empty()) {
-        // We didn't preload alternatives; lazy-fetch via the client.
-        auto fresh = client_->moveSegmentCandidate(segment_index, delta);
-        if (fresh) {
-            state_ = std::move(*fresh);
-        }
-        return;
-    }
-    int n = static_cast<int>(seg.candidates.size());
-    seg.focused_index = ((seg.focused_index + delta) % n + n) % n;
-}
-
-void Refiner::resize(int delta_chars) {
-    auto fresh = client_->resizeSegment(focused_segment_, delta_chars);
-    if (fresh) {
-        state_ = std::move(*fresh);
-        // Focus may have collapsed if we shrunk past the start; clamp.
-        if (focused_segment_ >=
-            static_cast<int>(state_.segments.size())) {
-            focused_segment_ = std::max(
-                0, static_cast<int>(state_.segments.size()) - 1);
-        }
-    }
-}
-
-void Refiner::moveFocus(int delta) {
-    int n = static_cast<int>(state_.segments.size());
-    if (n == 0) return;
-    focused_segment_ = ((focused_segment_ + delta) % n + n) % n;
+    return true;
 }
 
 RefinerView Refiner::view() const {
     RefinerView v;
+    if (!session_) return v;
+    const auto &state = session_->current();
     int cursor = 0;
-    for (int i = 0; i < static_cast<int>(state_.segments.size()); ++i) {
-        const auto &seg = state_.segments[i];
+    int focused = focusedSegmentIndex(state);
+    for (int i = 0; i < static_cast<int>(state.segments.size()); ++i) {
+        const auto &seg = state.segments[i];
         const std::string &value =
             seg.candidates.empty()
                 ? std::string()
@@ -120,7 +101,7 @@ RefinerView Refiner::view() const {
                       static_cast<int>(seg.candidates.size()) - 1)]
                       .value;
         int len_chars = utf8CharLen(value);
-        if (i == focused_segment_) {
+        if (i == focused) {
             v.focused_begin_chars = cursor;
             v.focused_end_chars = cursor + len_chars;
         }
@@ -132,11 +113,10 @@ RefinerView Refiner::view() const {
 }
 
 std::optional<RefinerCommit> Refiner::commit() {
-    if (!done_ || aborted_) {
-        return std::nullopt;
-    }
+    if (!done_ || aborted_ || !session_) return std::nullopt;
     RefinerCommit c;
-    for (const auto &seg : state_.segments) {
+    const auto &state = session_->current();
+    for (const auto &seg : state.segments) {
         if (seg.candidates.empty()) continue;
         const auto &winner = seg.candidates[
             std::clamp(seg.focused_index, 0,

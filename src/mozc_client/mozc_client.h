@@ -67,6 +67,8 @@ struct MozcClientOptions {
     bool debug = false;
 };
 
+class RefinementSession;
+
 class MozcClient {
 public:
     explicit MozcClient(MozcClientOptions options = {});
@@ -75,39 +77,70 @@ public:
     MozcClient(const MozcClient &) = delete;
     MozcClient &operator=(const MozcClient &) = delete;
 
-    // Convert a yomi (hiragana) to a structured candidate list.
-    // Returns std::nullopt on timeout / IPC failure (caller should fall back).
+    // One-shot conversion. Creates a fresh session, sends the yomi + SPACE,
+    // extracts candidates, tears down. Use this for the initial ▽ SPC.
     std::optional<MozcConversionResult> convert(const std::string &yomi);
 
-    // Apply a structural edit to the previous conversion result and return
-    // a fresh structured result. These power the refinement sub-mode keys.
+    // Open a session that stays alive while the user refines the conversion.
+    // The session holds mozc-side state (current segment focus, candidate
+    // cursors) across multiple operations. Closing it issues RESET_CONTEXT so
+    // no learning is recorded.
     //
-    // segment_index is the focused bunsetsu (0-based).
-    // For resize: delta < 0 shrinks, delta > 0 grows (in characters).
-    std::optional<MozcConversionResult>
-    resizeSegment(int segment_index, int delta);
+    // Returns nullptr on failure (caller falls back to the one-shot result).
+    std::unique_ptr<RefinementSession>
+    beginRefinement(const std::string &yomi);
 
-    // Move the focused candidate within a segment.
-    std::optional<MozcConversionResult>
-    moveSegmentCandidate(int segment_index, int delta);
-
-    // Discard server-side state (per-query convention). Safe to call at any
-    // time; failures here are not surfaced.
+    // Discard server-side state. Safe to call at any time.
     void resetContext();
 
-    // True if the last attempt got past the connect step. Used by the
-    // integration layer to log "mozc unavailable" once per session.
     bool reachable() const { return reachable_; }
 
-    // Public so that helper functions in the .cpp anonymous namespace can
-    // touch it. Treat it as private; never reference it from outside the
-    // .cpp file.
+    // Implementation handle. Public so the .cpp anonymous-namespace helpers
+    // can touch it; do not reference from outside the .cpp file.
     struct Impl;
+
+    const MozcClientOptions &options() const { return options_; }
 
 private:
     Impl *impl_;
     MozcClientOptions options_;
     bool reachable_ = true;
+};
+
+// Live, stateful conversation with mozc_server during the refinement sub-mode.
+// All methods return the post-action conversion result; std::nullopt means
+// the IPC failed and the caller should abort refinement.
+class RefinementSession {
+public:
+    ~RefinementSession();
+
+    RefinementSession(const RefinementSession &) = delete;
+    RefinementSession &operator=(const RefinementSession &) = delete;
+
+    // Refinement actions. Internally these send SEND_KEY with the appropriate
+    // (special_key, modifier_keys) tuple that mozc treats as the same action
+    // a user would trigger from the keyboard.
+    std::optional<MozcConversionResult> shrinkFocusedSegment();
+    std::optional<MozcConversionResult> growFocusedSegment();
+    std::optional<MozcConversionResult> focusNextSegment();
+    std::optional<MozcConversionResult> focusPrevSegment();
+    std::optional<MozcConversionResult> nextCandidate();
+    std::optional<MozcConversionResult> prevCandidate();
+
+    // Most recent conversion result (post last action).
+    const MozcConversionResult &current() const { return current_; }
+
+private:
+    friend class MozcClient;
+    RefinementSession(MozcClient::Impl *impl, uint64_t session_id,
+                      MozcClientOptions options,
+                      MozcConversionResult initial);
+
+    MozcClient::Impl *impl_;
+    uint64_t session_id_;
+    MozcClientOptions options_;
+    MozcConversionResult current_;
+    bool dead_ = false;
 };
 
 } // namespace skk_mozc

@@ -250,9 +250,14 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 
     // Hand off to refinement mode if mozc returned a usable bunsetsu split.
+    // beginRefinement() spends an extra mozc roundtrip; we deliberately accept
+    // that cost only when there's >= 2 segments, since single-bunsetsu
+    // conversions don't benefit from boundary editing.
     if (mozc_out && mozc_out->segments.size() >= 2) {
-        impl_->refiner = std::make_unique<Refiner>(
-            impl_->client, std::move(*mozc_out), yomi);
+        if (auto session = impl_->client->beginRefinement(yomi)) {
+            impl_->refiner =
+                std::make_unique<Refiner>(std::move(session), yomi);
+        }
     }
 }
 

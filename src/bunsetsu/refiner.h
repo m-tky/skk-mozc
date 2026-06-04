@@ -63,13 +63,14 @@ struct RefinerCommit {
 
 class Refiner {
 public:
-    Refiner(std::shared_ptr<MozcClient> client,
-            MozcConversionResult initial,
+    // Takes ownership of `session`, which is a live mozc session already
+    // primed with the initial conversion.
+    Refiner(std::unique_ptr<RefinementSession> session,
             std::string original_yomi);
     ~Refiner();
 
     // Apply a keypress-derived action. Returns true if the refiner consumed
-    // it. On Commit/Abort the refiner becomes "done" (see commit() / aborted()).
+    // it. On Commit/Abort the refiner becomes "done" (see done() / aborted()).
     bool dispatch(RefinerAction action);
 
     bool done() const { return done_; }
@@ -83,14 +84,8 @@ public:
     std::optional<RefinerCommit> commit();
 
 private:
-    void cycleCandidate(int segment_index, int delta);
-    void resize(int delta_chars);
-    void moveFocus(int delta);
-
-    std::shared_ptr<MozcClient> client_;
+    std::unique_ptr<RefinementSession> session_;
     std::string original_yomi_;
-    MozcConversionResult state_;
-    int focused_segment_ = 0;
     bool done_ = false;
     bool aborted_ = false;
 };
