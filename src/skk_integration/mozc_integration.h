@@ -27,6 +27,7 @@ class InputContext;
 extern "C" {
 typedef struct _SkkContext SkkContext;
 typedef struct _SkkCandidateList SkkCandidateList;
+typedef struct _SkkDict SkkDict;
 }
 
 namespace skk_mozc {
@@ -50,6 +51,12 @@ public:
     MozcIntegration(SkkContext *libskk_context,
                     IntegrationOptions options);
     ~MozcIntegration();
+
+    // Tell the integration which libskk dictionary to write user learning
+    // into. Pass the first writable SkkDict the engine has (typically
+    // ~/.skk-jisyo). May be called at construction time or any time later;
+    // a null pointer disables learning until set again.
+    void setUserDict(SkkDict *user_dict);
 
     // Called from the *top* of SkkState::keyEvent. Returns true if the
     // refinement sub-mode consumed the key (in which case the caller skips

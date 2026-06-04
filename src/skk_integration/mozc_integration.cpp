@@ -103,7 +103,8 @@ std::string libskkCurrentYomi(SkkContext *ctx) {
 } // namespace
 
 struct MozcIntegration::Impl {
-    SkkContext *libskk_ctx;
+    SkkContext *libskk_ctx = nullptr;
+    SkkDict *user_dict = nullptr;
     IntegrationOptions opts;
     std::shared_ptr<MozcClient> client;
     std::unique_ptr<Refiner> refiner;
@@ -124,6 +125,10 @@ MozcIntegration::MozcIntegration(SkkContext *libskk_context,
 }
 
 MozcIntegration::~MozcIntegration() = default;
+
+void MozcIntegration::setUserDict(SkkDict *user_dict) {
+    impl_->user_dict = user_dict;
+}
 
 bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
                                 fcitx::InputContext *ic) {
@@ -263,13 +268,28 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
 
 void MozcIntegration::recordCommit(const std::string &yomi,
                                    const std::string &surface) {
-    // v0 stub. When a merged (mozc-side) candidate is committed, libskk's own
-    // commit path is bypassed, so its user-dict learning does not fire. The
-    // practical fix is to re-feed yomi+surface back to libskk so the user dict
-    // picks it up; we defer that to M3 alongside the bunsetsu refinement
-    // commit path. See CLAUDE.md "オープン論点".
-    (void)yomi;
-    (void)surface;
+    if (yomi.empty() || surface.empty()) return;
+    if (!impl_->user_dict) {
+        // No writable dict was provided; silently skip. The merged candidate
+        // is still committed to the application, just not learned.
+        return;
+    }
+    // Build a transient SkkCandidate (libskk owns the memory via GObject
+    // refcount) and have the user dict adopt it. `okuri = FALSE` because the
+    // mozc-side candidates we merge come from full-word conversion, not the
+    // SKK okurigana sub-mode. `output` mirrors `text` since SKK's display
+    // and committed string are identical for these entries.
+    ::SkkCandidate *cand = skk_candidate_new(
+        yomi.c_str(),
+        static_cast<gboolean>(0),        // okuri
+        surface.c_str(),                  // text
+        nullptr,                          // annotation
+        surface.c_str());                 // output
+    if (!cand) return;
+    if (skk_dict_select_candidate(impl_->user_dict, cand)) {
+        skk_dict_save(impl_->user_dict, nullptr);
+    }
+    g_object_unref(cand);
 }
 
 } // namespace skk_mozc
