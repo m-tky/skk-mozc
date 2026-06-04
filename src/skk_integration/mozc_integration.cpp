@@ -240,16 +240,23 @@ void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
     impl->refiner.reset();
     ic->inputPanel().reset();
     if (reset_libskk) {
+        if (impl->libskk_ctx) {
+            const gchar *pre_before = skk_context_get_preedit(impl->libskk_ctx);
+            SKK_MOZC_LOG("clearMozcPanel(reset=true): libskk preedit before = \"%s\"",
+                         pre_before ? pre_before : "(null)");
+        }
         if (impl->full_reset) {
-            // Goes through SkkState::reset which clears libskk + the cached
-            // preedit_ + re-runs updateUI. Without this the application keeps
-            // showing the previous ▽yomi as preedit even though commit
-            // already happened, which looks identical to "carry-over" from
-            // the user's perspective.
+            SKK_MOZC_LOG("clearMozcPanel: calling SkkState::reset() via full_reset");
             impl->full_reset();
         } else if (impl->libskk_ctx) {
+            SKK_MOZC_LOG("clearMozcPanel: no full_reset cb, calling skk_context_reset directly");
             skk_context_reset(impl->libskk_ctx);
             ic->updatePreedit();
+        }
+        if (impl->libskk_ctx) {
+            const gchar *pre_after = skk_context_get_preedit(impl->libskk_ctx);
+            SKK_MOZC_LOG("clearMozcPanel(reset=true): libskk preedit after  = \"%s\"",
+                         pre_after ? pre_after : "(null)");
         }
     }
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -415,6 +422,9 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
     if (keyEvent.isRelease()) return false;
     if (!keyEvent.key().check(FcitxKey_space)) return false;
 
+    const gchar *raw_preedit = skk_context_get_preedit(impl_->libskk_ctx);
+    SKK_MOZC_LOG("SPC: raw libskk preedit=\"%s\"",
+                 raw_preedit ? raw_preedit : "(null)");
     std::string yomi = libskkCurrentYomi(impl_->libskk_ctx);
     if (yomi.empty() || utf8Chars(yomi) < kMinYomiCharsForMozc) {
         SKK_MOZC_LOG("SPC: skip — not in ▽ mode or yomi too short");
