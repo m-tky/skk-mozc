@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Protobuf REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PROTOBUF_PC REQUIRED IMPORTED_TARGET protobuf)
 
 # Layout staged by the derivation:
 #   ./mozc_client/         C++ implementation
@@ -58,7 +60,7 @@ add_executable(mozc-client-cli
 target_include_directories(mozc-client-cli PRIVATE
     "${CMAKE_SOURCE_DIR}"
     "${CMAKE_BINARY_DIR}")
-target_link_libraries(mozc-client-cli PRIVATE ${Protobuf_LIBRARIES})
+target_link_libraries(mozc-client-cli PRIVATE PkgConfig::PROTOBUF_PC)
 
 include(GNUInstallDirs)
 install(TARGETS mozc-client-cli DESTINATION ${CMAKE_INSTALL_BINDIR})

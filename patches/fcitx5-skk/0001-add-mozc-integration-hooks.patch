@@ -1,10 +1,15 @@
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 5a84eaa..66aa85e 100644
+index 5a84eaa..194c3ca 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -1,12 +1,57 @@
+@@ -1,12 +1,62 @@
  
 +find_package(Protobuf REQUIRED)
++# Modern protobuf (>= 22) requires absl. pkg-config gives the full link line
++# (libprotobuf + absl_log + absl_strings + ...) which the CMake imported
++# target alone doesn't transitively expose for MODULE libraries.
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(SKK_MOZC_PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
 +
 +set(SKK_MOZC_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 +file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/protocol")
@@ -56,7 +61,7 @@ index 5a84eaa..66aa85e 100644
      Fcitx5::Core
      Fcitx5::Config
      LibSKK::LibSKK
-+    ${Protobuf_LIBRARIES}
++    PkgConfig::SKK_MOZC_PROTOBUF
  )
  set_target_properties(skk PROPERTIES PREFIX "")
  install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
