@@ -471,13 +471,14 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
     SKK_MOZC_LOG("SPC: opening merged panel (%zu candidates)", merged.size());
     installMergedPanel(impl_.get(), ic, yomi, std::move(merged));
 
-    if (mozc_out && mozc_out->segments.size() >= 2) {
-        if (auto session = impl_->client->beginRefinement(yomi)) {
-            impl_->refiner =
-                std::make_unique<Refiner>(std::move(session), yomi);
-            SKK_MOZC_LOG("SPC: refinement sub-mode armed");
-        }
-    }
+    // Refinement sub-mode (Shift+Arrow / Tab to tweak bunsetsu boundaries)
+    // is disabled in v1: it shared the ENTER/SPACE keys with the panel and
+    // produced a second, competing commit (Refiner's segment-by-segment
+    // concatenation vs. the panel's full-sentence top candidate). That
+    // looked to the user as two pasted strings, one of which was wrong.
+    // We will re-introduce it once we have a clean key-routing split so
+    // the two UIs don't both claim Enter.
+    (void)mozc_out;
     keyEvent.filterAndAccept();
     return true;
 }
