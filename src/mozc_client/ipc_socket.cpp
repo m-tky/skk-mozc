@@ -39,6 +39,16 @@ std::string xdgRuntimeDir() {
     return "/run/user/" + std::to_string(::getuid());
 }
 
+std::string xdgConfigHome() {
+    if (const char *r = std::getenv("XDG_CONFIG_HOME"); r && *r) {
+        return r;
+    }
+    if (const char *h = std::getenv("HOME"); h && *h) {
+        return std::string(h) + "/.config";
+    }
+    return "/tmp";
+}
+
 int connectWithTimeout(const std::string &path,
                        std::chrono::milliseconds budget) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
@@ -142,7 +152,12 @@ std::string resolveSocketPath(const std::string &override_path) {
         return override_path;
     }
     uid_t uid = ::getuid();
-    std::array<std::string, 2> candidates = {
+    // Order matters: the first path that exists wins, falling back to the
+    // canonical one if nothing's there yet (so a lazy server start can create
+    // it). The XDG_CONFIG_HOME variant is what current mozc actually uses; the
+    // /tmp + XDG_RUNTIME_DIR forms are kept for older mozc builds.
+    std::array<std::string, 3> candidates = {
+        xdgConfigHome() + "/mozc/.session.ipc",
         xdgRuntimeDir() + "/.mozc." + std::to_string(uid) + ".session",
         "/tmp/.mozc." + std::to_string(uid) + ".session",
     };
@@ -151,8 +166,6 @@ std::string resolveSocketPath(const std::string &override_path) {
             return c;
         }
     }
-    // Prefer XDG path even when nothing exists yet so a lazy server start can
-    // create it there.
     return candidates.front();
 }
 
