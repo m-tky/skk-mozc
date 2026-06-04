@@ -56,15 +56,16 @@ int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-    setupTestingEnvironment(
-        TESTING_BINARY_DIR,
-        // Addon shared-library search dirs. Our skk.so is installed by the
-        // tests derivation alongside the test binary.
-        {SKK_MOZC_ADDON_DIR,
-         StandardPaths::fcitxPath("addondir")},
-        // Data dirs containing addon/*.conf, inputmethod/*.conf etc.
-        {SKK_MOZC_DATA_DIR,
-         StandardPaths::fcitxPath("pkgdatadir")});
+    // addonPaths / dataPaths are *relative* to testBinaryDir; the nix
+    // derivation places skk.so + libtestfrontend.so under
+    //   $out/share/skk-mozc/e2e/addons/
+    // and the addon / inputmethod confs under
+    //   $out/share/skk-mozc/e2e/data/addon|inputmethod
+    // System fcitx5 dirs are still searched too via StandardPaths so e.g.
+    // testui's runtime asset lookups don't break.
+    setupTestingEnvironment(TESTING_BINARY_DIR,
+                            {"addons"},
+                            {"data"});
 
     char arg0[] = "skk-mozc-e2e-test";
     char arg1[] = "--disable=all";
