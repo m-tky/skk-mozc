@@ -174,11 +174,13 @@ namespace {
 // Forward decls (definitions follow).
 
 // Install a CommonCandidateList from a merged candidate list and mark the
-// integration as panel-owning.
+// integration as panel-owning. `segments` powers per-bunsetsu learning on
+// commit of the full-sentence top candidate.
 void installMergedPanel(MozcIntegration::Impl *impl,
                         fcitx::InputContext *ic,
                         std::string yomi,
-                        std::vector<MergedCandidate> merged);
+                        std::vector<MergedCandidate> merged,
+                        std::vector<MozcSegment> segments);
 
 // Tear down the mozc panel, optionally also clearing libskk's preedit (used
 // when we commit so libskk doesn't keep showing ▽yomi after we wrote text).
@@ -243,10 +245,27 @@ fcitx::KeyList selectionKeysFor(
     }
 }
 
+// Push (yomi, surface) into the SKK user dict. Centralised here so all
+// commit paths (panel, refiner future) share the same learn logic.
+void learnIntoUserDict(MozcIntegration::Impl *impl,
+                       const std::string &yomi,
+                       const std::string &surface) {
+    if (!impl->user_dict || yomi.empty() || surface.empty()) return;
+    ::SkkCandidate *cand = skk_candidate_new(
+        yomi.c_str(), static_cast<gboolean>(0),
+        surface.c_str(), nullptr, surface.c_str());
+    if (!cand) return;
+    if (skk_dict_select_candidate(impl->user_dict, cand)) {
+        skk_dict_save(impl->user_dict, nullptr);
+    }
+    g_object_unref(cand);
+}
+
 void installMergedPanel(MozcIntegration::Impl *impl,
                         fcitx::InputContext *ic,
                         std::string yomi,
-                        std::vector<MergedCandidate> merged) {
+                        std::vector<MergedCandidate> merged,
+                        std::vector<MozcSegment> segments) {
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
     MozcIntegration::SkkConfigSnapshot cfg;
     if (impl->config_accessor) cfg = impl->config_accessor();
@@ -254,24 +273,38 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
     fcitx_list->setSelectionKey(selectionKeysFor(cfg.choose_key));
 
+    // Pre-compute the concatenated segment surface so the callback can
+    // decide whether to break the commit into per-segment learn pairs.
+    std::string segments_concat;
+    for (const auto &seg : segments) {
+        if (!seg.candidates.empty()) {
+            segments_concat += seg.candidates.front().value;
+        }
+    }
     for (const auto &c : merged) {
         std::string text = c.value;
         std::string desc = c.annotation;
         auto *self = impl;
-        auto cb = [self, text, yomi](fcitx::InputContext *ictx) {
+        auto cb = [self, text, yomi, segments, segments_concat]
+                  (fcitx::InputContext *ictx) {
             SKK_MOZC_LOG("panel: commit \"%s\" for yomi=\"%s\"",
                          text.c_str(), yomi.c_str());
             ictx->commitString(text);
-            if (self->user_dict) {
-                ::SkkCandidate *cand = skk_candidate_new(
-                    yomi.c_str(), static_cast<gboolean>(0),
-                    text.c_str(), nullptr, text.c_str());
-                if (cand) {
-                    if (skk_dict_select_candidate(self->user_dict, cand)) {
-                        skk_dict_save(self->user_dict, nullptr);
-                    }
-                    g_object_unref(cand);
+            // Always learn the full (yomi, text) pair.
+            learnIntoUserDict(self, yomi, text);
+            // If the user picked the full-sentence candidate (whose value
+            // matches the mozc preedit's segment concatenation), also learn
+            // each bunsetsu independently. This way next time the user
+            // converts a sub-phrase ("やきにくていしょく"), the SKK personal
+            // dict has it as a direct hit and beats mozc to position #1.
+            if (!segments_concat.empty() && text == segments_concat) {
+                for (const auto &seg : segments) {
+                    if (seg.candidates.empty()) continue;
+                    learnIntoUserDict(self, seg.reading,
+                                      seg.candidates.front().value);
                 }
+                SKK_MOZC_LOG("panel: also learned %zu segments",
+                             segments.size());
             }
             clearMozcPanel(self, ictx, /*reset_libskk=*/true);
         };
@@ -552,7 +585,10 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
     if (merged.empty()) return false;
 
     SKK_MOZC_LOG("SPC: opening merged panel (%zu candidates)", merged.size());
-    installMergedPanel(impl_.get(), ic, yomi, std::move(merged));
+    std::vector<MozcSegment> segs;
+    if (mozc_out) segs = std::move(mozc_out->segments);
+    installMergedPanel(impl_.get(), ic, yomi, std::move(merged),
+                       std::move(segs));
 
     // Refinement sub-mode (Shift+Arrow / Tab to tweak bunsetsu boundaries)
     // is disabled in v1: it shared the ENTER/SPACE keys with the panel and
