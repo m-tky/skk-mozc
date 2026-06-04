@@ -10,6 +10,7 @@
  */
 
 #include "mozc_client.h"
+#include "../log/log.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,8 +25,15 @@ int main(int argc, char **argv) {
 
     skk_mozc::MozcClientOptions opts;
     opts.debug = true;
-    if (const char *p = std::getenv("MOZC_SERVER")) {
+    // Use the same env knobs the fcitx5 addon does so behavior matches.
+    if (const char *p = std::getenv("SKK_MOZC_MOZC_SERVER"); p && *p) {
         opts.mozc_server_path = p;
+    } else if (const char *p = std::getenv("MOZC_SERVER"); p && *p) {
+        opts.mozc_server_path = p;
+    }
+    if (const char *d = std::getenv("SKK_MOZC_DEBUG"); d && *d &&
+        std::string(d) != "0") {
+        skk_mozc::log::setEnabled(true);
     }
 
     skk_mozc::MozcClient client(opts);
