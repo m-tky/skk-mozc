@@ -19,6 +19,7 @@
 #include <fcitx/text.h>
 #include <libskk/libskk.h>
 
+#include <array>
 #include <cstdlib>
 #include <functional>
 #include <optional>
@@ -98,15 +99,28 @@ int utf8Chars(const std::string &s) {
 }
 
 std::string libskkCurrentYomi(SkkContext *ctx) {
-    // libskk exposes the in-progress preedit; the portion under the
-    // conversion ("▽" marker) is what we want as the yomi.
+    // We only care about ▽ mode (yomi input). In ▼ mode the preedit contains
+    // an already-converted candidate (e.g. "▼朝日"), which is not a usable
+    // mozc query. Returning empty makes the caller skip mozc work entirely
+    // for non-▽ states, which is what we want until the SPC-intercept
+    // redesign lands.
     const gchar *preedit = skk_context_get_preedit(ctx);
     if (!preedit) return {};
+    static const std::string kTriangleDown = "\xe2\x96\xbd"; // ▽ U+25BD
     std::string s = preedit;
-    // Strip the leading ▽ marker (U+25BD, UTF-8 e2 96 bd) if present.
-    static const std::string kHeisei = "\xe2\x96\xbd";
-    if (s.rfind(kHeisei, 0) == 0) {
-        s.erase(0, kHeisei.size());
+    if (s.rfind(kTriangleDown, 0) != 0) return {};
+    s.erase(0, kTriangleDown.size());
+    // Defensive: strip any other stray SKK markers if present.
+    static const std::array<std::string, 3> kStrayMarkers = {
+        "\xe2\x96\xbc", // ▼
+        "\xe2\x96\xb3", // △
+        "\xe2\x96\xb2", // ▲
+    };
+    for (const auto &m : kStrayMarkers) {
+        size_t pos;
+        while ((pos = s.find(m)) != std::string::npos) {
+            s.erase(pos, m.size());
+        }
     }
     return s;
 }
@@ -290,38 +304,22 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
     }
     auto merged = mergeCandidates(mi);
 
-    // Rebuild fcitx5 candidate list with the merged contents. Annotations
-    // (SKK ;-prefixed notes or mozc descriptions) go into the comment slot so
-    // fcitx5 renders them inline next to the candidate.
-    auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
-    for (const auto &c : merged) {
-        fcitx::Text display(c.value);
-        std::function<void(fcitx::InputContext *)> cb =
-            [text = c.value, yomi, this](fcitx::InputContext *ictx) {
-                ictx->commitString(text);
-                this->recordCommit(yomi, text);
-            };
-        if (!c.annotation.empty()) {
-            fcitx_list->append<CallbackCandidateWord>(
-                std::move(display), fcitx::Text(c.annotation), std::move(cb));
-        } else {
-            fcitx_list->append<CallbackCandidateWord>(std::move(display),
-                                                      std::move(cb));
-        }
-    }
-    ic->inputPanel().setCandidateList(std::move(fcitx_list));
-    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    // v0 architectural-fix safety: do NOT replace libskk's candidate panel.
+    // Replacing it caused a split where libskk-driven selection (handleCandidate
+    // in skk.cpp) picked from libskk's internal list while users saw OUR list,
+    // producing commits that didn't match the display.
+    //
+    // Until the SPC-intercept rewrite (next phase) properly takes over both
+    // candidate display AND selection, we only LOG what mozc would have
+    // contributed. SKK's native UI is left untouched.
+    (void)merged;
+    (void)ic;
+    SKK_MOZC_LOG("augment: log-only mode — %zu merged candidates would be shown",
+                 merged.size());
 
-    // Hand off to refinement mode if mozc returned a usable bunsetsu split.
-    // beginRefinement() spends an extra mozc roundtrip; we deliberately accept
-    // that cost only when there's >= 2 segments, since single-bunsetsu
-    // conversions don't benefit from boundary editing.
-    if (mozc_out && mozc_out->segments.size() >= 2) {
-        if (auto session = impl_->client->beginRefinement(yomi)) {
-            impl_->refiner =
-                std::make_unique<Refiner>(std::move(session), yomi);
-        }
-    }
+    // Refinement sub-mode is also gated off in this safety mode; it depends
+    // on us owning the panel.
+    (void)mozc_out;
 }
 
 void MozcIntegration::recordCommit(const std::string &yomi,
