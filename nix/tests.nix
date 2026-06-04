@@ -4,6 +4,7 @@
 , ninja
 , pkg-config
 , libskk
+, libgee
 , glib
 
 , skkMozcSources
@@ -22,7 +23,7 @@ stdenv.mkDerivation {
   src = skkMozcTests;
 
   nativeBuildInputs = [ cmake ninja pkg-config ];
-  buildInputs = [ libskk glib ];
+  buildInputs = [ libskk glib libgee ];
 
   postUnpack = ''
     sourceRoot=tests

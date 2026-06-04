@@ -22,7 +22,7 @@ find_package(PkgConfig REQUIRED)
 find_library(LIBSKK_LIB skk REQUIRED)
 get_filename_component(LIBSKK_LIBDIR "${LIBSKK_LIB}" DIRECTORY)
 get_filename_component(LIBSKK_PREFIX "${LIBSKK_LIBDIR}" DIRECTORY)
-pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gee-0.8)
 
 add_executable(libskk-integration-test
     libskk_integration_test.cpp
