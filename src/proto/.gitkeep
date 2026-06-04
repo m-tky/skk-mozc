@@ -1,0 +1,2 @@
+# commands.pb.{h,cc} は protoc が build 時にここへ生成する。
+# 本物の .proto は nixpkgs.mozc.src から postPatch で src/proto/ にコピーされる。

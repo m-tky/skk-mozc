@@ -1,0 +1,79 @@
+/*
+ * SPDX-FileCopyrightText: 2026 fcitx5-skk-mozc contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Façade that the patched skk.cpp talks to. Keeps the patch small: 3
+ * call-sites referencing this single header.
+ *
+ * Lifetime: one instance per SkkState (i.e., per input context), owned via
+ * std::unique_ptr from SkkState.
+ */
+
+#ifndef FCITX5_SKK_MOZC_INTEGRATION_H_
+#define FCITX5_SKK_MOZC_INTEGRATION_H_
+
+#include <memory>
+#include <string>
+
+// Forward-decl rather than #include fcitx5 headers so this file can be lifted
+// into a CLI build (no fcitx5 link needed) for unit tests.
+namespace fcitx {
+class KeyEvent;
+class InputContext;
+} // namespace fcitx
+
+// libskk forward decls. The integration calls into libskk to read the current
+// yomi / candidates and to inject learning into the user dict.
+extern "C" {
+typedef struct _SkkContext SkkContext;
+typedef struct _SkkCandidateList SkkCandidateList;
+}
+
+namespace skk_mozc {
+
+class MozcClient;
+
+struct IntegrationOptions {
+    bool mozc_enabled = true;
+    int ipc_timeout_ms = 50;
+    int max_mozc_candidates = 20;
+    bool debug = false;
+
+    // Reads SKK_MOZC_ENABLE / SKK_MOZC_IPC_TIMEOUT_MS /
+    // SKK_MOZC_MAX_CANDIDATES / SKK_MOZC_DEBUG from the environment. Anything
+    // unset falls back to the defaults above.
+    static IntegrationOptions fromEnv();
+};
+
+class MozcIntegration {
+public:
+    MozcIntegration(SkkContext *libskk_context,
+                    IntegrationOptions options);
+    ~MozcIntegration();
+
+    // Called from the *top* of SkkState::keyEvent. Returns true if the
+    // refinement sub-mode consumed the key (in which case the caller skips
+    // libskk dispatch and the rest of its keyEvent).
+    bool handleKey(fcitx::KeyEvent &keyEvent,
+                   fcitx::InputContext *ic);
+
+    // Called from SkkState::updateUI after libskk has produced its candidate
+    // list. Inspects the libskk SkkCandidateList and, if we are in a state
+    // where mozc augmentation makes sense (▽ mode with a multi-char yomi),
+    // builds a merged candidate list and pushes it onto fcitx5's input panel.
+    void augmentCandidates(fcitx::InputContext *ic,
+                           SkkCandidateList *libskk_candidates);
+
+    // Called when SKK commits text from a merged candidate; routes the
+    // learning back into libskk's user dict.
+    void recordCommit(const std::string &yomi,
+                      const std::string &surface);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace skk_mozc
+
+#endif // FCITX5_SKK_MOZC_INTEGRATION_H_

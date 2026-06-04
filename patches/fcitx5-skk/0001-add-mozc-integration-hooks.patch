@@ -1,0 +1,121 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 5a84eaa..597d789 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -1,12 +1,31 @@
+ 
++find_package(Protobuf REQUIRED)
++
++set(SKK_MOZC_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
++file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/proto")
++
++protobuf_generate_cpp(SKK_MOZC_PROTO_SRCS SKK_MOZC_PROTO_HDRS
++    "${SKK_MOZC_PROTO_DIR}/commands.proto"
++    "${SKK_MOZC_PROTO_DIR}/config.proto")
++
+ set(SKK_SOURCES
+     skk.cpp
++    mozc_client/mozc_client.cpp
++    mozc_client/ipc_socket.cpp
++    candidate_merger/merger.cpp
++    bunsetsu/refiner.cpp
++    skk_integration/mozc_integration.cpp
++    ${SKK_MOZC_PROTO_SRCS}
+ )
+ add_fcitx5_addon(skk ${SKK_SOURCES})
++target_include_directories(skk PRIVATE
++    "${CMAKE_CURRENT_SOURCE_DIR}"
++    "${CMAKE_CURRENT_BINARY_DIR}")
+ target_link_libraries(skk
+     Fcitx5::Core
+     Fcitx5::Config
+     LibSKK::LibSKK
++    ${Protobuf_LIBRARIES}
+ )
+ set_target_properties(skk PROPERTIES PREFIX "")
+ install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
+@@ -18,3 +37,17 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skk-addon.conf" RENAME skk.conf DESTI
+ 
+ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dictionary_list.in ${CMAKE_CURRENT_BINARY_DIR}/dictionary_list @ONLY)
+ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dictionary_list DESTINATION "${FCITX_INSTALL_PKGDATADIR}/skk")
++
++option(SKK_MOZC_BUILD_CLI "Also build mozc-client-cli" OFF)
++if(SKK_MOZC_BUILD_CLI)
++    add_executable(mozc-client-cli
++        mozc_client/cli_main.cpp
++        mozc_client/mozc_client.cpp
++        mozc_client/ipc_socket.cpp
++        ${SKK_MOZC_PROTO_SRCS})
++    target_include_directories(mozc-client-cli PRIVATE
++        "${CMAKE_CURRENT_SOURCE_DIR}"
++        "${CMAKE_CURRENT_BINARY_DIR}")
++    target_link_libraries(mozc-client-cli ${Protobuf_LIBRARIES})
++    install(TARGETS mozc-client-cli DESTINATION "${CMAKE_INSTALL_BINDIR}")
++endif()
+diff --git a/src/skk.cpp b/src/skk.cpp
+index 19b564b..1b9c73e 100644
+--- a/src/skk.cpp
++++ b/src/skk.cpp
+@@ -48,6 +48,7 @@
+ #include <glib-object.h>
+ #include <glib.h>
+ #include <libskk/libskk.h>
++#include "skk_integration/mozc_integration.h"
+ 
+ #define SKK_DEBUG() FCITX_LOGC(::fcitx::skk_logcategory, Debug)
+ 
+@@ -627,6 +628,9 @@ SkkState::SkkState(SkkEngine *engine, InputContext *ic)
+     skk_context_set_auto_start_henkan_keywords(
+         context, const_cast<gchar **>(AUTO_START_HENKAN_KEYWORDS),
+         G_N_ELEMENTS(AUTO_START_HENKAN_KEYWORDS));
++
++    mozc_integration_ = std::make_unique<skk_mozc::MozcIntegration>(
++        context, skk_mozc::IntegrationOptions::fromEnv());
+ }
+ 
+ SkkState::~SkkState() {
+@@ -634,6 +638,10 @@ SkkState::~SkkState() {
+ }
+ 
+ void SkkState::keyEvent(KeyEvent &keyEvent) {
++    if (mozc_integration_ &&
++        mozc_integration_->handleKey(keyEvent, ic_)) {
++        return;
++    }
+     if (handleCandidate(keyEvent)) {
+         return;
+     }
+@@ -731,6 +739,9 @@ void SkkState::updateUI() {
+     std::unique_ptr<SkkFcitxCandidateList> candidateList;
+     if (skk_candidate_list_get_page_visible(skkCandidates)) {
+         candidateList = std::make_unique<SkkFcitxCandidateList>(engine_, ic_);
++        if (mozc_integration_) {
++            mozc_integration_->augmentCandidates(ic_, skkCandidates);
++        }
+     }
+ 
+     if (auto str = UniqueCPtr<char, g_free>{skk_context_poll_output(context)}) {
+diff --git a/src/skk.h b/src/skk.h
+index ff5d874..086818b 100644
+--- a/src/skk.h
++++ b/src/skk.h
+@@ -36,6 +36,10 @@
+ #include <glib.h>
+ #include <libskk/libskk.h>
+ 
++namespace skk_mozc {
++class MozcIntegration;
++}
++
+ namespace fcitx {
+ 
+ enum class CandidateChooseKey { Digit, ABC, Qwerty };
+@@ -237,6 +241,8 @@ private:
+     SkkInputMode lastMode_ = SKK_INPUT_MODE_DEFAULT;
+     bool lastIsEmpty_ = true;
+     Text preedit_;
++
++    std::unique_ptr<skk_mozc::MozcIntegration> mozc_integration_;
+ };
+ 
+ } // namespace fcitx
