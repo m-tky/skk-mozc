@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
     Instance instance(3, iargv);
     instance.addonManager().registerDefaultLoader(nullptr);
 
-    auto *testfrontend = instance.addonManager().addon("testfrontend");
+    auto *testfrontend =
+        instance.addonManager().addon("testfrontend", /*load=*/true);
     if (!testfrontend) {
         std::fprintf(stderr,
                      "[FAIL] could not load testfrontend addon\n");
