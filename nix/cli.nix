@@ -22,12 +22,9 @@ stdenv.mkDerivation {
   nativeBuildInputs = [ cmake ninja pkg-config protobuf ];
   buildInputs = [ protobuf ];
 
-  # The source tree has its CMakeLists.txt named "CMakeLists-cli.txt" so it
-  # doesn't shadow anything in src/. Move it into place and add the protos.
-  postUnpack = ''
-    sourceRoot=source
-  '';
-
+  # src/ unpacks as a "src" sourceRoot; we don't need to rename it. The
+  # postPatch step puts the CLI-specific CMakeLists.txt at the root and stages
+  # the vendored proto files alongside.
   postPatch = ''
     cp mozc_client/CMakeLists-cli.txt CMakeLists.txt
     mkdir -p proto
