@@ -353,6 +353,12 @@ bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
     return true;
 }
 
+namespace {
+// Forward decl; the definition lives further down alongside the panel-key
+// translation helpers.
+skk_mozc::dispatch::PanelKey classifyPanelKey(const fcitx::Key &k);
+} // namespace
+
 bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
                                 fcitx::InputContext *ic) {
     if (keyEvent.isRelease()) {
