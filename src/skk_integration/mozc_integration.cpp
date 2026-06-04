@@ -277,6 +277,10 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     fcitx_list->setPageSize(cfg.page_size);
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
     fcitx_list->setSelectionKey(selectionKeysFor(cfg.choose_key));
+    // Pin the cursor model so wrap-around at list boundaries is predictable
+    // and never produces -1 (which crashed fcitx5's renderer in some cases).
+    fcitx_list->setCursorIncludeUnselected(false);
+    fcitx_list->setCursorKeepInSamePage(false);
 
     // Pre-compute the concatenated segment surface so the callback can
     // decide whether to break the commit into per-segment learn pairs.
@@ -711,13 +715,24 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         return false;
     }
     case A::NextCandidate:
-        list->nextCandidate();
-        refresh_ui();
+        // Bounds-check before calling fcitx5's nextCandidate(): the
+        // built-in wrap path raced with our preedit-mirror updates in
+        // some builds and crashed fcitx5 from an IOEventCallback after
+        // the cursor had reached the last position. Staying put at the
+        // end is the safer UX (Mozc users expect Space to not loop
+        // silently anyway).
+        if (list->totalSize() > 0 &&
+            list->globalCursorIndex() + 1 < list->totalSize()) {
+            list->nextCandidate();
+            refresh_ui();
+        }
         keyEvent.filterAndAccept();
         return true;
     case A::PrevCandidate:
-        list->prevCandidate();
-        refresh_ui();
+        if (list->globalCursorIndex() > 0) {
+            list->prevCandidate();
+            refresh_ui();
+        }
         keyEvent.filterAndAccept();
         return true;
     case A::NextPage:

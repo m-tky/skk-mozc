@@ -150,6 +150,24 @@ int main(int argc, char **argv) {
                      {"D", "a", "i", "j", "y", "o", "u", "b", "u",
                       "space", "Return"});
 
+            // === Scenario 4: navigate past the last candidate ===
+            // The user reported fcitx5 crashing when pressing Space after
+            // reaching the bottom of the candidate list. This scenario
+            // hammers Space many times — more than there could plausibly
+            // be candidates — to exercise the boundary path repeatedly.
+            // No commit expectation is pushed: the test passes simply by
+            // not crashing fcitx5 / segfaulting the test binary.
+            sendKeys(testfrontend, uuid,
+                     {"A", "s", "a", "h", "i", "space"});
+            for (int i = 0; i < 50; ++i) {
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("space"), false);
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("space"), true);
+            }
+            // Cancel cleanly to leave libskk in a fresh state.
+            sendKeys(testfrontend, uuid, {"Escape"});
+
             instance.exit();
         });
 
