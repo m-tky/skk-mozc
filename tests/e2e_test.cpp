@@ -177,6 +177,27 @@ int main(int argc, char **argv) {
             }
             sendKeys(testfrontend, uuid, {"Escape"});
 
+            // (c) Explicit Page_Down / Page_Up spam — this is the *other*
+            //     historical route into a cursor / currentPage_ desync,
+            //     because CommonCandidateList::next() advances the page
+            //     without moving the cursor. We re-anchor the cursor in
+            //     mozc_integration; this scenario locks that contract in.
+            sendKeys(testfrontend, uuid,
+                     {"K", "a", "n", "j", "i", "space"});
+            for (int i = 0; i < 100; ++i) {
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("Page_Down"), false);
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("Page_Down"), true);
+            }
+            for (int i = 0; i < 100; ++i) {
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("Page_Up"), false);
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("Page_Up"), true);
+            }
+            sendKeys(testfrontend, uuid, {"Escape"});
+
             instance.exit();
         });
 

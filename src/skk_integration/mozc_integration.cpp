@@ -274,46 +274,28 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
     MozcIntegration::SkkConfigSnapshot cfg;
     if (impl->config_accessor) cfg = impl->config_accessor();
-    // ROOT-CAUSE FIX for the 'CommonCandidateList: invalid index' fcitx5
-    // crash when navigating to (or past) the last candidate:
+    // Multi-page panel restored. The 'CommonCandidateList: invalid index'
+    // crash root cause was a cursor/currentPage_ desync producing
+    // cursorIndex() == -1 → label(-1). The CORRECT cure is:
     //
-    // CommonCandidateList paginates internally — it stores ALL candidates
-    // and exposes them through `size()` / `label()` / `candidate()` based
-    // on a `currentPage_` cursor. fcitx5 5.1.19's renderer trusts that
-    // (cursor page == currentPage_), querying cursorIndex() which returns
-    // -1 when those disagree. The renderer then calls label(-1) and the
-    // bounds-check assertion escapes through the IO callback, aborting
-    // fcitx5.
-    //
-    // fcitx5-skk's own SkkFcitxCandidateList avoids this entirely by only
-    // ever placing ONE page worth of candidates into its list, and
-    // rebuilding the list on page change. We achieve the same property
-    // here without a custom list class: pageSize = total candidate count.
-    // Now there is only ever a single page, currentPage_ stays 0, cursor
-    // is always page-relative, and cursorIndex() can never return -1.
-    // The cost is that all candidates render at once (no PageUp/Down
-    // splitting), which matches how most modern IMEs behave with vertical
-    // panels anyway.
-    int n = static_cast<int>(merged.size());
-    if (n < 1) n = 1;
-    fcitx_list->setPageSize(n);
+    //   (a) setCursorKeepInSamePage(false): fcitx5's moveCursor() then
+    //       auto-runs setPage(cursor / pageSize) on every nextCandidate /
+    //       prevCandidate, keeping cursor and currentPage_ in lockstep.
+    //   (b) Whenever WE call list->next() / list->prev() (explicit page
+    //       paging via PageUp/PageDown), we MUST also move the cursor onto
+    //       the new page — fcitx5 doesn't do that for us, and skipping it
+    //       is precisely how the desync used to creep in.
+    //   (c) Label / selection-key list sized exactly to pageSize so
+    //       label(idx) for idx in [size(), labels_.size()) can never
+    //       throw 'invalid label idx'.
+    int page_size = cfg.page_size > 0 ? cfg.page_size : 9;
+    fcitx_list->setPageSize(page_size);
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
-    // Selection keys: pad/trim so labels_ has EXACTLY n entries (matching
-    // pageSize). If we leave it shorter, label(i) for i in [sel.size(), n)
-    // would throw 'invalid label idx' — the same assertion family we're
-    // protecting against. Padding with a default Key produces an empty
-    // label string for slots past the shortcut range, which renders as a
-    // candidate with no digit prefix — fine for the user.
     auto sel = selectionKeysFor(cfg.choose_key);
-    sel.resize(n); // grow with default Keys (sym=None → empty label)
+    sel.resize(page_size); // pad/trim with default Keys (empty labels)
     fcitx_list->setSelectionKey(sel);
     fcitx_list->setCursorIncludeUnselected(false);
-    fcitx_list->setCursorKeepInSamePage(true);
-    // We deliberately don't honour cfg.page_size: respecting the user's
-    // PageSize would re-introduce pagination, and with it the
-    // currentPage_ / cursor-page divergence bug above. PageSize remains
-    // a per-skk-conf setting only for libskk's own ▼ candidate panel.
-    (void)cfg.page_size;
+    fcitx_list->setCursorKeepInSamePage(false); // (a) above
 
     // Pre-compute the concatenated segment surface so the callback can
     // decide whether to break the commit into per-segment learn pairs.
@@ -754,12 +736,10 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         return false;
     }
     case A::NextCandidate:
-        // Bounds-check before calling fcitx5's nextCandidate(): the
-        // built-in wrap path raced with our preedit-mirror updates in
-        // some builds and crashed fcitx5 from an IOEventCallback after
-        // the cursor had reached the last position. Staying put at the
-        // end is the safer UX (Mozc users expect Space to not loop
-        // silently anyway).
+        // Don't advance past the very last candidate — Mozc users expect
+        // Space to stop, not silently wrap. Page crossing within range is
+        // handled automatically by fcitx5 because we set
+        // setCursorKeepInSamePage(false) in installMergedPanel.
         if (list->totalSize() > 0 &&
             list->globalCursorIndex() + 1 < list->totalSize()) {
             list->nextCandidate();
@@ -775,13 +755,24 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         keyEvent.filterAndAccept();
         return true;
     case A::NextPage:
-        list->next();
-        refresh_ui();
+        // CommonCandidateList::next() advances currentPage_ but does NOT
+        // touch the global cursor — leaving cursor on the old page makes
+        // cursorIndex() return -1, which the renderer then turns into
+        // label(-1) → 'invalid label idx' → fcitx5 abort. Re-anchor the
+        // cursor to the first slot of the new page so they stay synced.
+        if (list->hasNext()) {
+            list->next();
+            list->setGlobalCursorIndex(list->currentPage() * list->pageSize());
+            refresh_ui();
+        }
         keyEvent.filterAndAccept();
         return true;
     case A::PrevPage:
-        list->prev();
-        refresh_ui();
+        if (list->hasPrev()) {
+            list->prev();
+            list->setGlobalCursorIndex(list->currentPage() * list->pageSize());
+            refresh_ui();
+        }
         keyEvent.filterAndAccept();
         return true;
     case A::HardCancel:
