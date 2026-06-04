@@ -149,8 +149,16 @@ With Home Manager the equivalent options are `programs.fcitx5-skk-mozc.{mozc.ena
 
 ## SKK dictionaries
 
-- System dictionaries (e.g. SKK-JISYO.L) are configured the usual fcitx5-skk way via the dictionary list. The Home Manager module wires up `nixpkgs.skkDictionaries.l` by default.
-- The user dictionary at `~/.skk-jisyo` is created automatically (on the HM path) and used for all learning, including from Mozc-sourced candidates.
+This addon does not try to manage SKK dictionaries on your behalf — the standard fcitx5-skk dictionary list at `~/.local/share/fcitx5/skk/dictionary_list` keeps working unchanged. Add system dicts there as usual, e.g. via Home Manager:
+
+```nix
+home.file.".local/share/fcitx5/skk/dictionary_list".text = ''
+  file=${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L,mode=readonly,type=file
+  file=${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei,mode=readonly,type=file
+'';
+```
+
+The user dictionary at `~/.skk-jisyo` is created automatically by the HM module and is where all learning (SKK or Mozc-sourced) gets persisted.
 
 ## Development
 

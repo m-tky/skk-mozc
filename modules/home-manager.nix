@@ -46,15 +46,6 @@ in
       };
     };
 
-    extraSkkDictionaries = lib.mkOption {
-      type = lib.types.listOf lib.types.path;
-      default = [ ];
-      description = ''
-        Additional SKK system dictionaries (paths). Appended after the
-        defaults provided by nixpkgs.skkDictionaries.
-      '';
-    };
-
     debug = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -90,15 +81,10 @@ in
       SKK_MOZC_DEBUG = if cfg.debug then "1" else "0";
     };
 
-    # Ensure the SKK system dictionary list and user dict exist.
-    xdg.configFile."fcitx5/conf/skk-mozc-dictionaries".text =
-      let
-        defaults = [
-          "${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L"
-        ];
-        all = defaults ++ cfg.extraSkkDictionaries;
-      in
-      lib.concatMapStringsSep "\n" (p: "${p}") all + "\n";
+    # SKK dictionaries themselves are not managed by this module; users
+    # configure them via the standard fcitx5-skk location at
+    # ~/.local/share/fcitx5/skk/dictionary_list. This avoids clobbering setups
+    # that already manage ~/.config/fcitx5 declaratively.
 
     home.activation.skkMozcInitUserDict = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run mkdir -p $HOME

@@ -152,8 +152,16 @@ Home Manager から使う場合は `programs.fcitx5-skk-mozc.{mozc.enable, mozc.
 
 ## SKK 辞書
 
-- システム辞書 (例: SKK-JISYO.L) は fcitx5-skk の dictionary list でそのまま設定します (HM 経由のときは `nixpkgs.skkDictionaries.l` をデフォルトで投入)。
-- ユーザ辞書は `~/.skk-jisyo` を自動使用。確定するたびにここに学習が積まれます。Mozc 由来の候補を選んだ場合も同じ場所に書き込まれるので、辞書の出所を意識する必要はありません。
+このアドオンは SKK 辞書の管理には関与しません。標準の `~/.local/share/fcitx5/skk/dictionary_list` をそのまま使ってください。HM 経由なら例えば:
+
+```nix
+home.file.".local/share/fcitx5/skk/dictionary_list".text = ''
+  file=${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L,mode=readonly,type=file
+  file=${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei,mode=readonly,type=file
+'';
+```
+
+ユーザ辞書 `~/.skk-jisyo` は HM モジュールが自動作成。SKK 由来でも Mozc 由来でも、確定した語はすべてここに学習されます。
 
 ## 開発
 
