@@ -66,6 +66,12 @@ int main(int argc, char **argv) {
     setupTestingEnvironment(TESTING_BINARY_DIR,
                             {"addons"},
                             {"data"});
+    if (const char *e = std::getenv("FCITX_ADDON_DIRS")) {
+        std::fprintf(stderr, "[DEBUG] FCITX_ADDON_DIRS=%s\n", e);
+    }
+    if (const char *e = std::getenv("FCITX_DATA_DIRS")) {
+        std::fprintf(stderr, "[DEBUG] FCITX_DATA_DIRS=%s\n", e);
+    }
 
     char arg0[] = "skk-mozc-e2e-test";
     char arg1[] = "--disable=all";
