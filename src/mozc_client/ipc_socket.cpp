@@ -4,16 +4,20 @@
  */
 
 #include "ipc_socket.h"
+#include "ipc/ipc.pb.h"
 
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <fstream>
 #include <poll.h>
 #include <signal.h>
+#include <sstream>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -24,7 +28,6 @@ namespace skk_mozc::ipc {
 namespace {
 
 namespace fs = std::filesystem;
-
 using clock_t = std::chrono::steady_clock;
 
 bool fileExists(const std::string &path) {
@@ -32,39 +35,46 @@ bool fileExists(const std::string &path) {
     return fs::exists(path, ec);
 }
 
-std::string xdgRuntimeDir() {
-    if (const char *r = std::getenv("XDG_RUNTIME_DIR"); r && *r) {
-        return r;
-    }
-    return "/run/user/" + std::to_string(::getuid());
-}
-
 std::string xdgConfigHome() {
-    if (const char *r = std::getenv("XDG_CONFIG_HOME"); r && *r) {
-        return r;
-    }
+    if (const char *r = std::getenv("XDG_CONFIG_HOME"); r && *r) return r;
     if (const char *h = std::getenv("HOME"); h && *h) {
         return std::string(h) + "/.config";
     }
     return "/tmp";
 }
 
-int connectWithTimeout(const std::string &path,
+// Construct the abstract UNIX socket address mozc_server listens on, given
+// the key string from IPCPathInfo. Format: "\0tmp/.mozc.<key>.session".
+std::vector<uint8_t> buildAbstractAddress(const std::string &key) {
+    static const char kPrefix[] = "/tmp/.mozc.";
+    static const char kSuffix[] = ".session";
+    std::vector<uint8_t> out;
+    out.reserve(sizeof(kPrefix) - 1 + key.size() + sizeof(kSuffix) - 1);
+    out.insert(out.end(), kPrefix, kPrefix + sizeof(kPrefix) - 1);
+    out.insert(out.end(), key.begin(), key.end());
+    out.insert(out.end(), kSuffix, kSuffix + sizeof(kSuffix) - 1);
+    out[0] = 0; // turn into abstract socket
+    return out;
+}
+
+int connectWithTimeout(const std::vector<uint8_t> &addr,
                        std::chrono::milliseconds budget) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-    if (fd < 0) {
-        return -1;
-    }
+    if (fd < 0) return -1;
 
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (path.size() >= sizeof(addr.sun_path)) {
+    sockaddr_un sa{};
+    sa.sun_family = AF_UNIX;
+    if (addr.size() > sizeof(sa.sun_path)) {
         ::close(fd);
         return -1;
     }
-    std::memcpy(addr.sun_path, path.data(), path.size());
+    std::memcpy(sa.sun_path, addr.data(), addr.size());
+    // For abstract sockets we MUST use exact byte-length (don't strlen, since
+    // sun_path[0] == 0).
+    socklen_t sun_len = static_cast<socklen_t>(
+        offsetof(sockaddr_un, sun_path) + addr.size());
 
-    if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
+    if (::connect(fd, reinterpret_cast<sockaddr *>(&sa), sun_len) == 0) {
         return fd;
     }
     if (errno != EINPROGRESS) {
@@ -72,8 +82,7 @@ int connectWithTimeout(const std::string &path,
         return -1;
     }
     pollfd pfd{fd, POLLOUT, 0};
-    int n = ::poll(&pfd, 1, static_cast<int>(budget.count()));
-    if (n <= 0) {
+    if (::poll(&pfd, 1, static_cast<int>(budget.count())) <= 0) {
         ::close(fd);
         return -1;
     }
@@ -87,150 +96,110 @@ int connectWithTimeout(const std::string &path,
 }
 
 bool writeAll(int fd, const uint8_t *data, size_t len,
-              std::chrono::milliseconds budget,
               const clock_t::time_point &deadline) {
     while (len > 0) {
         auto now = clock_t::now();
-        if (now >= deadline) {
-            return false;
-        }
+        if (now >= deadline) return false;
         auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - now);
         pollfd pfd{fd, POLLOUT, 0};
-        int n = ::poll(&pfd, 1, static_cast<int>(remaining.count()));
-        if (n <= 0) {
+        if (::poll(&pfd, 1, static_cast<int>(remaining.count())) <= 0) {
             return false;
         }
         ssize_t w = ::send(fd, data, len, MSG_NOSIGNAL);
         if (w < 0) {
-            if (errno == EINTR || errno == EAGAIN) {
-                continue;
-            }
+            if (errno == EINTR || errno == EAGAIN) continue;
             return false;
         }
         data += w;
         len -= static_cast<size_t>(w);
     }
-    (void)budget;
     return true;
 }
 
-bool readAll(int fd, uint8_t *data, size_t len,
-             const clock_t::time_point &deadline) {
-    while (len > 0) {
+// Read until EOF (peer closes write half). Bounded by `deadline` and a
+// generous max-size guard.
+std::optional<std::vector<uint8_t>>
+readUntilEof(int fd, const clock_t::time_point &deadline) {
+    constexpr size_t kMaxResponse = 1u << 24; // 16 MiB
+    std::vector<uint8_t> out;
+    std::array<uint8_t, 4096> buf{};
+    for (;;) {
         auto now = clock_t::now();
-        if (now >= deadline) {
-            return false;
-        }
+        if (now >= deadline) return std::nullopt;
         auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - now);
         pollfd pfd{fd, POLLIN, 0};
         int n = ::poll(&pfd, 1, static_cast<int>(remaining.count()));
-        if (n <= 0) {
-            return false;
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return std::nullopt;
         }
-        ssize_t r = ::recv(fd, data, len, 0);
-        if (r == 0) {
-            return false; // EOF before complete
-        }
+        if (n == 0) return std::nullopt; // timeout
+        ssize_t r = ::recv(fd, buf.data(), buf.size(), 0);
+        if (r == 0) return out; // EOF
         if (r < 0) {
-            if (errno == EINTR || errno == EAGAIN) {
-                continue;
-            }
-            return false;
+            if (errno == EINTR || errno == EAGAIN) continue;
+            return std::nullopt;
         }
-        data += r;
-        len -= static_cast<size_t>(r);
+        if (out.size() + r > kMaxResponse) return std::nullopt;
+        out.insert(out.end(), buf.data(), buf.data() + r);
     }
-    return true;
 }
 
 } // namespace
 
-std::string resolveSocketPath(const std::string &override_path) {
-    if (!override_path.empty()) {
-        return override_path;
+std::vector<uint8_t> resolveSocketAddress(const std::string &override_path) {
+    std::string path = override_path.empty()
+                           ? xdgConfigHome() + "/mozc/.session.ipc"
+                           : override_path;
+    if (!fileExists(path)) {
+        return {};
     }
-    uid_t uid = ::getuid();
-    // Order matters: the first path that exists wins, falling back to the
-    // canonical one if nothing's there yet (so a lazy server start can create
-    // it). The XDG_CONFIG_HOME variant is what current mozc actually uses; the
-    // /tmp + XDG_RUNTIME_DIR forms are kept for older mozc builds.
-    std::array<std::string, 3> candidates = {
-        xdgConfigHome() + "/mozc/.session.ipc",
-        xdgRuntimeDir() + "/.mozc." + std::to_string(uid) + ".session",
-        "/tmp/.mozc." + std::to_string(uid) + ".session",
-    };
-    for (const auto &c : candidates) {
-        if (fileExists(c)) {
-            return c;
-        }
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return {};
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string body = ss.str();
+
+    mozc::ipc::IPCPathInfo info;
+    if (!info.ParseFromString(body)) {
+        return {};
     }
-    return candidates.front();
+    if (info.key().empty()) {
+        return {};
+    }
+    return buildAbstractAddress(info.key());
 }
 
 std::optional<std::vector<uint8_t>>
-sendRequest(const std::string &socket_path,
+sendRequest(const std::vector<uint8_t> &socket_address,
             const std::vector<uint8_t> &payload,
             std::chrono::milliseconds timeout) {
+    if (socket_address.empty()) return std::nullopt;
     auto deadline = clock_t::now() + timeout;
 
-    int fd = connectWithTimeout(socket_path, timeout);
-    if (fd < 0) {
-        return std::nullopt;
-    }
-
+    int fd = connectWithTimeout(socket_address, timeout);
+    if (fd < 0) return std::nullopt;
     struct CloseOnExit {
         int fd;
         ~CloseOnExit() { if (fd >= 0) ::close(fd); }
     } guard{fd};
 
-    // Frame: 4-byte LE length + payload.
-    uint32_t size = static_cast<uint32_t>(payload.size());
-    std::array<uint8_t, 4> header = {
-        static_cast<uint8_t>(size & 0xff),
-        static_cast<uint8_t>((size >> 8) & 0xff),
-        static_cast<uint8_t>((size >> 16) & 0xff),
-        static_cast<uint8_t>((size >> 24) & 0xff),
-    };
-    if (!writeAll(fd, header.data(), header.size(), timeout, deadline)) {
+    if (!writeAll(fd, payload.data(), payload.size(), deadline)) {
         return std::nullopt;
     }
-    if (!writeAll(fd, payload.data(), payload.size(), timeout, deadline)) {
-        return std::nullopt;
-    }
-
-    std::array<uint8_t, 4> rsp_header{};
-    if (!readAll(fd, rsp_header.data(), rsp_header.size(), deadline)) {
-        return std::nullopt;
-    }
-    uint32_t rsp_len = static_cast<uint32_t>(rsp_header[0]) |
-                       (static_cast<uint32_t>(rsp_header[1]) << 8) |
-                       (static_cast<uint32_t>(rsp_header[2]) << 16) |
-                       (static_cast<uint32_t>(rsp_header[3]) << 24);
-    // Sanity: refuse absurd allocations.
-    if (rsp_len > (16u * 1024u * 1024u)) {
-        return std::nullopt;
-    }
-    std::vector<uint8_t> body(rsp_len);
-    if (rsp_len > 0 && !readAll(fd, body.data(), body.size(), deadline)) {
-        return std::nullopt;
-    }
-    return body;
+    // Half-close so the server stops reading.
+    ::shutdown(fd, SHUT_WR);
+    return readUntilEof(fd, deadline);
 }
 
 bool spawnServer(const std::string &mozc_server_path) {
-    if (mozc_server_path.empty()) {
-        return false;
-    }
+    if (mozc_server_path.empty()) return false;
     pid_t pid = ::fork();
-    if (pid < 0) {
-        return false;
-    }
+    if (pid < 0) return false;
     if (pid == 0) {
-        // Child: detach from parent, exec server.
         ::setsid();
-        // Close stdio; mozc_server will reopen its own logging.
         int devnull = ::open("/dev/null", O_RDWR);
         if (devnull >= 0) {
             ::dup2(devnull, 0);
@@ -246,8 +215,6 @@ bool spawnServer(const std::string &mozc_server_path) {
         ::execv(mozc_server_path.c_str(), const_cast<char *const *>(argv));
         ::_exit(127);
     }
-    // Parent: let it run detached. We don't wait; reap via SIGCHLD/SA_NOCLDWAIT
-    // by relying on the child setsid'ing into its own process group.
     return true;
 }
 

@@ -34,7 +34,7 @@ namespace skk_mozc {
 namespace mc = mozc::commands;
 
 struct MozcClient::Impl {
-    std::string socket_path;
+    std::vector<uint8_t> socket_address;
     uint64_t session_id = 0;
     bool warned_unavailable = false;
 
@@ -45,7 +45,7 @@ struct MozcClient::Impl {
             return std::nullopt;
         }
         std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-        return ipc::sendRequest(socket_path, payload, timeout);
+        return ipc::sendRequest(socket_address, payload, timeout);
     }
 
     std::optional<mc::Output>
@@ -128,16 +128,24 @@ void extractSegments(const mc::Output &out,
 
 bool ensureServerReachable(MozcClient::Impl &impl,
                            const MozcClientOptions &opts) {
+    // Re-resolve the socket address each attempt; the rendezvous file changes
+    // when mozc_server restarts.
+    impl.socket_address = ipc::resolveSocketAddress(opts.socket_path_override);
+
     // Cheap probe: NO_OPERATION. If unreachable, try to lazy-start once.
     mc::Input ping;
     ping.set_type(mc::Input::NO_OPERATION);
-    if (impl.call(ping, opts.timeout)) {
+    if (!impl.socket_address.empty() && impl.call(ping, opts.timeout)) {
         return true;
     }
     if (ipc::spawnServer(opts.mozc_server_path)) {
         for (int i = 0; i < 6; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            if (impl.call(ping, opts.timeout)) return true;
+            impl.socket_address =
+                ipc::resolveSocketAddress(opts.socket_path_override);
+            if (!impl.socket_address.empty() && impl.call(ping, opts.timeout)) {
+                return true;
+            }
         }
     }
     if (!impl.warned_unavailable && opts.debug) {
@@ -152,7 +160,8 @@ bool ensureServerReachable(MozcClient::Impl &impl,
 
 MozcClient::MozcClient(MozcClientOptions options)
     : impl_(new Impl()), options_(std::move(options)) {
-    impl_->socket_path = ipc::resolveSocketPath(options_.socket_path_override);
+    impl_->socket_address =
+        ipc::resolveSocketAddress(options_.socket_path_override);
 }
 
 MozcClient::~MozcClient() {

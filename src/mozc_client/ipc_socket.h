@@ -2,16 +2,20 @@
  * SPDX-FileCopyrightText: 2026 fcitx5-skk-mozc contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * UNIX socket framing for talking to mozc_server.
+ * UNIX socket transport for talking to mozc_server.
  *
- * Mozc's IPC framing (see mozc/src/ipc/unix_ipc.cc):
- *   uint32_t  payload_size  (little-endian)
- *   uint8_t[] payload        (protobuf-serialized commands.Input/Output)
+ * The mozc protocol is more peculiar than a typical RPC:
+ *   1. On Linux the server binds an *abstract* UNIX socket whose name is
+ *      derived from a key the server publishes in a rendezvous file
+ *      ($XDG_CONFIG_HOME/mozc/.session.ipc), serialized as a mozc.ipc.IPCPathInfo
+ *      protobuf message.
+ *   2. Once connected, the client sends its serialized request, then
+ *      shutdown(SHUT_WR) to mark end-of-message. The server reads until EOF,
+ *      processes, and writes back, then closes its write side.
+ *   3. There is no length prefix on the wire.
  *
- * mozc_server creates its socket at
- *   $XDG_RUNTIME_DIR/.mozc.<uid>.session   (Linux, modern)
- * with a fallback to /tmp/.<uid>.mozc/.mozc.<uid>.session on older mozc.
- * The first reachable path wins.
+ * See mozc/src/ipc/{ipc_path_manager,unix_ipc}.{h,cc} for the canonical
+ * implementation.
  */
 
 #ifndef FCITX5_SKK_MOZC_IPC_SOCKET_H_
@@ -25,22 +29,22 @@
 
 namespace skk_mozc::ipc {
 
-// Resolve the UNIX socket path mozc_server is expected to listen on.
-// Returns the first existing candidate path, or the preferred default if none
-// exists yet (so the caller can try to connect and trigger lazy start).
-std::string resolveSocketPath(const std::string &override_path = "");
+// Resolve mozc_server's session socket. The returned bytes are the contents
+// of sun_path; they may legitimately start with a NUL byte (Linux abstract
+// socket) and are not null-terminated.
+//
+// On error returns an empty vector (caller treats this as "mozc unreachable").
+std::vector<uint8_t> resolveSocketAddress(const std::string &override_path = "");
 
-// One-shot blocking request. Connects, sends `payload`, reads a response,
-// closes. Returns the response bytes on success, std::nullopt on
-// timeout/error. The total timeout covers connect + send + recv.
+// One-shot blocking request: connect, send `payload`, shutdown(SHUT_WR),
+// recv until EOF, close. `socket_address` comes from resolveSocketAddress().
 std::optional<std::vector<uint8_t>>
-sendRequest(const std::string &socket_path,
+sendRequest(const std::vector<uint8_t> &socket_address,
             const std::vector<uint8_t> &payload,
             std::chrono::milliseconds timeout);
 
 // Attempt to spawn mozc_server in the background. Returns true if the spawn
-// syscall succeeded (does NOT wait for the server to be ready). Idempotent:
-// safe to call when a server is already running.
+// syscall succeeded (does NOT wait for the server to be ready).
 bool spawnServer(const std::string &mozc_server_path);
 
 } // namespace skk_mozc::ipc

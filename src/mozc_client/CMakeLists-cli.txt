@@ -18,6 +18,7 @@ find_package(Protobuf REQUIRED)
 
 set(PROTO_DIR "${CMAKE_SOURCE_DIR}/proto")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/protocol")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ipc")
 
 set(PROTO_FILES
     protocol/commands.proto
@@ -27,13 +28,15 @@ set(PROTO_FILES
     protocol/user_dictionary_storage.proto
     protocol/renderer_command.proto
     protocol/renderer_style.proto
+    ipc/ipc.proto
 )
 
 set(PROTO_GENERATED)
 foreach(P ${PROTO_FILES})
+    get_filename_component(DIR ${P} DIRECTORY)
     get_filename_component(BASE ${P} NAME_WE)
-    set(OUT_CC "${CMAKE_BINARY_DIR}/protocol/${BASE}.pb.cc")
-    set(OUT_H  "${CMAKE_BINARY_DIR}/protocol/${BASE}.pb.h")
+    set(OUT_CC "${CMAKE_BINARY_DIR}/${DIR}/${BASE}.pb.cc")
+    set(OUT_H  "${CMAKE_BINARY_DIR}/${DIR}/${BASE}.pb.h")
     add_custom_command(
         OUTPUT  ${OUT_CC} ${OUT_H}
         COMMAND ${Protobuf_PROTOC_EXECUTABLE}
