@@ -79,6 +79,7 @@ int main(int argc, char **argv) {
     char *iargv[] = {arg0, arg1, arg2};
     Instance instance(3, iargv);
     instance.addonManager().registerDefaultLoader(nullptr);
+    instance.addonManager().load();
 
     auto *testfrontend =
         instance.addonManager().addon("testfrontend", /*load=*/true);
