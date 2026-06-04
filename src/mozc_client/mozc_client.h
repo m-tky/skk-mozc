@@ -54,6 +54,9 @@ struct MozcConversionResult {
     std::vector<MozcCandidate> top_candidates;
     // The bunsetsu breakdown. Used by the refinement sub-mode.
     std::vector<MozcSegment> segments;
+    // Index into `segments` of the bunsetsu mozc currently considers focused
+    // (mirrors Preedit.highlighted_position). -1 if no segment is highlighted.
+    int focused_segment = -1;
 };
 
 struct MozcClientOptions {

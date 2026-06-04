@@ -147,6 +147,27 @@ void extractSegments(const mc::Output &out,
     }
 }
 
+int extractFocusedSegment(const mc::Output &out) {
+    if (!out.has_preedit() || !out.preedit().has_highlighted_position()) {
+        return -1;
+    }
+    // mozc's highlighted_position is the segment index of the HIGHLIGHT
+    // annotation, which matches what the user sees as the focused bunsetsu.
+    int idx = static_cast<int>(out.preedit().highlighted_position());
+    if (idx < 0 || idx >= out.preedit().segment_size()) return -1;
+    return idx;
+}
+
+MozcConversionResult outputToResult(const mc::Output &out,
+                                    const std::string &yomi,
+                                    int max_candidates) {
+    MozcConversionResult r;
+    extractTopCandidates(out, max_candidates, yomi, r.top_candidates);
+    extractSegments(out, r.segments);
+    r.focused_segment = extractFocusedSegment(out);
+    return r;
+}
+
 bool ensureServerReachable(MozcClient::Impl &impl,
                            const MozcClientOptions &opts) {
     // Re-resolve the socket address each attempt; the rendezvous file changes
@@ -251,10 +272,8 @@ MozcClient::convert(const std::string &yomi) {
         return std::nullopt;
     }
 
-    MozcConversionResult result;
-    extractTopCandidates(*convert_out, options_.max_candidates, yomi,
-                         result.top_candidates);
-    extractSegments(*convert_out, result.segments);
+    MozcConversionResult result = outputToResult(
+        *convert_out, yomi, options_.max_candidates);
 
     resetContext();
     {
@@ -296,15 +315,6 @@ feedYomiAndConvert(MozcClient::Impl &impl,
     spc.set_id(session_id);
     spc.mutable_key()->set_special_key(mc::KeyEvent::SPACE);
     return impl.call(spc, timeout);
-}
-
-MozcConversionResult outputToResult(const mc::Output &out,
-                                    const std::string &yomi,
-                                    int max_candidates) {
-    MozcConversionResult r;
-    extractTopCandidates(out, max_candidates, yomi, r.top_candidates);
-    extractSegments(out, r.segments);
-    return r;
 }
 
 } // namespace

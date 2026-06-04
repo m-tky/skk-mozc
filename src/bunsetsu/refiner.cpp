@@ -27,13 +27,9 @@ int utf8CharLen(const std::string &s) {
 }
 
 int focusedSegmentIndex(const MozcConversionResult &state) {
-    // Mozc keeps the focused segment via its own preedit; we infer the index
-    // by looking at the segments list (preedit.segment is rebuilt every
-    // turn). v0 doesn't have HIGHLIGHT info here, so default to 0.
-    // The integration layer relies on this being a stable, monotonic value
-    // only for UI highlighting; mozc's own state remains authoritative on
-    // the wire side.
-    (void)state;
+    // mozc reports the highlighted bunsetsu directly; fall back to 0 if not
+    // available (e.g., when the conversion hasn't selected one yet).
+    if (state.focused_segment >= 0) return state.focused_segment;
     return 0;
 }
 
