@@ -187,6 +187,11 @@ void installMergedPanel(MozcIntegration::Impl *impl,
 void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
                     bool reset_libskk);
 
+// Live SKK dict lookup against every dict the engine has. Used by both the
+// initial SPC interception and the refinement-rebuild path.
+std::vector<SkkSideCandidate>
+lookupSkkCandidates(MozcIntegration::Impl *impl, const std::string &yomi);
+
 // ---- Implementations ----
 
 // Mirror the focused candidate of the active panel into the inline preedit
