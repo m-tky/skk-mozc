@@ -73,6 +73,13 @@ public:
     using DictAccessor = std::function<std::vector<SkkDict *>()>;
     void setDictAccessor(DictAccessor accessor);
 
+    // Callback that fully resets SkkState. Called after we commit a
+    // merged candidate so the cached SkkState::preedit_ is cleared along
+    // with libskk's own state — otherwise the application keeps seeing
+    // ▽yomi as preedit after our commit.
+    using FullReset = std::function<void()>;
+    void setFullReset(FullReset cb);
+
     // Called from the *top* of SkkState::keyEvent. Returns true if the
     // refinement sub-mode consumed the key (in which case the caller skips
     // libskk dispatch and the rest of its keyEvent).

@@ -110,6 +110,7 @@ struct MozcIntegration::Impl {
     SkkContext *libskk_ctx = nullptr;
     SkkDict *user_dict = nullptr;
     MozcIntegration::DictAccessor dict_accessor;
+    MozcIntegration::FullReset full_reset;
     IntegrationOptions opts;
     std::shared_ptr<MozcClient> client;
     std::unique_ptr<Refiner> refiner;
@@ -157,6 +158,10 @@ bool MozcIntegration::ownsCandidatePanel() const {
 
 void MozcIntegration::setDictAccessor(DictAccessor accessor) {
     impl_->dict_accessor = std::move(accessor);
+}
+
+void MozcIntegration::setFullReset(FullReset cb) {
+    impl_->full_reset = std::move(cb);
 }
 
 namespace {
@@ -234,13 +239,20 @@ void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
     impl->panel_yomi.clear();
     impl->refiner.reset();
     ic->inputPanel().reset();
-    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-    if (reset_libskk && impl->libskk_ctx) {
-        // Drop libskk's ▽ preedit so the application doesn't see a phantom
-        // yomi after our commit.
-        skk_context_reset(impl->libskk_ctx);
-        ic->updatePreedit();
+    if (reset_libskk) {
+        if (impl->full_reset) {
+            // Goes through SkkState::reset which clears libskk + the cached
+            // preedit_ + re-runs updateUI. Without this the application keeps
+            // showing the previous ▽yomi as preedit even though commit
+            // already happened, which looks identical to "carry-over" from
+            // the user's perspective.
+            impl->full_reset();
+        } else if (impl->libskk_ctx) {
+            skk_context_reset(impl->libskk_ctx);
+            ic->updatePreedit();
+        }
     }
+    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
 } // namespace
