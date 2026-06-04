@@ -35,7 +35,8 @@
             skkMozcPatches = ./patches/fcitx5-skk;
           };
           mozc-client-cli = pkgs.callPackage ./nix/cli.nix {
-            inherit fcitx5-skk-mozc;
+            inherit mozc-src;
+            skkMozcSources = ./src;
           };
         in
         {
@@ -50,7 +51,7 @@
               cmake
               ninja
               pkg-config
-              extra-cmake-modules
+              kdePackages.extra-cmake-modules
               gettext
               protobuf
               fcitx5

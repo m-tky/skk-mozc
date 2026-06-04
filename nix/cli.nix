@@ -1,30 +1,44 @@
 { lib
 , stdenv
-, fcitx5-skk-mozc
+, cmake
+, ninja
+, pkg-config
 , protobuf
-, makeWrapper
+
+, mozc-src
+, skkMozcSources
 }:
 
-# Small CLI that exercises the IPC client standalone. Useful as a sanity check
-# while developing: run `mozc-client-cli あさひしんぶん` and inspect candidates.
-# Built from the same tree as fcitx5-skk-mozc, just with a different entry point.
+# Builds just the standalone IPC sanity-check CLI. Does NOT depend on
+# fcitx5-skk or the upstream patches, so it's the fastest path to verify the
+# Mozc IPC client compiles and talks to a running mozc_server.
 
 stdenv.mkDerivation {
   pname = "mozc-client-cli";
-  inherit (fcitx5-skk-mozc) version src patches postPatch;
+  version = "0.1.0-unstable";
 
-  nativeBuildInputs = fcitx5-skk-mozc.nativeBuildInputs ++ [ makeWrapper ];
-  buildInputs = fcitx5-skk-mozc.buildInputs;
+  src = skkMozcSources;
 
-  cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=Release"
-    "-DSKK_MOZC_BUILD_CLI=ON"
-    "-DSKK_MOZC_ENABLE=OFF"   # don't build the fcitx5 addon for this output
-  ];
+  nativeBuildInputs = [ cmake ninja pkg-config protobuf ];
+  buildInputs = [ protobuf ];
+
+  # The source tree has its CMakeLists.txt named "CMakeLists-cli.txt" so it
+  # doesn't shadow anything in src/. Move it into place and add the protos.
+  postUnpack = ''
+    sourceRoot=source
+  '';
+
+  postPatch = ''
+    cp mozc_client/CMakeLists-cli.txt CMakeLists.txt
+    mkdir -p proto
+    cp ${mozc-src}/src/protocol/commands.proto proto/commands.proto
+    cp ${mozc-src}/src/protocol/config.proto   proto/config.proto
+  '';
 
   meta = with lib; {
     description = "CLI tool to query Mozc for candidates (testing aid for fcitx5-skk-mozc)";
     license = licenses.gpl3Plus;
     platforms = platforms.linux;
+    mainProgram = "mozc-client-cli";
   };
 }

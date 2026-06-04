@@ -3,7 +3,7 @@
 , cmake
 , ninja
 , pkg-config
-, extra-cmake-modules
+, kdePackages
 , gettext
 , protobuf
 , fcitx5
@@ -42,7 +42,7 @@ stdenv.mkDerivation (finalAttrs: {
     cmake
     ninja
     pkg-config
-    extra-cmake-modules
+    kdePackages.extra-cmake-modules
     gettext
     protobuf
     gobject-introspection
