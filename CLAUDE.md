@@ -163,11 +163,11 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 - **M0** ✅: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、ソーススケルトン)
 - **M1** ✅: Mozc IPC クライアントを単体テストで動かす (`mozc-client-cli`)
 - **M2** ✅ (ビルドのみ): fcitx5-skk patch + マージャ統合の `skk.so` がビルド完走。実機ロード検証は M5。
-- **M3**: 文節境界調整サブモード実装 + 追加 SPACE による全文節変換取得 + recordCommit の学習注入
-- **M4**: HM モジュール統合、`nix flake check` でビルド完走
-- **M5**: 実機 (NixOS + HM) で fcitx5 にロードして動作確認、日常使用調整
+- **M3** ✅ (実装+ビルド): 全文節変換 + RefinementSession による live mozc IPC 経由の境界調整 / 注目移動 / 候補巡回。recordCommit の libskk user dict 注入は M5 で実機検証時に詰める。
+- **M4**: HM モジュール統合、`nix flake check` で全 outputs ビルド
+- **M5**: 実機 (NixOS + HM) で fcitx5 にロードして動作確認、recordCommit の libskk 経路を完成、日常使用調整
 
-現状: **M3 進行中**。
+現状: **M4 進行中**。
 
 ### M1 で判明した Mozc IPC の実仕様 (CLAUDE.md 当初記載との差分)
 
@@ -185,6 +185,15 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 - `IPCPathInfo` proto は `src/ipc/ipc.proto` (commands.proto と別パッケージ)。ビルドに追加で取り込む。
 - 「わたしはがくせいです」のような長文をひと SPACE で投げると、Mozc は **第一文節のみ** 確定形を返す。完全な多文節変換結果を取るには文節をまたいだ追加 SPACE / CONVERT_NEXT_PAGE 等を発行する必要があり、これは M2/M3 で対応する。
 - 「さしみほうちょう」は Mozc も「刺し身」+「包丁」に文節分割するため、`top_candidates` には「刺身包丁」が出ない。これは Refiner で全文節を結合した値を別途生成して候補に加える必要がある。
+
+### M3 の構造
+
+- **全文節変換**: `Output.preedit.segment[].value` を concat した文字列を `top_candidates` の先頭 (cost = -1) に prepend。SKK ▽ SPC で「わたしはがくせいです」→「私は学生です」が即座に出る。
+- **RefinementSession**: `MozcClient::beginRefinement(yomi)` がライブ mozc セッションを保持する `RefinementSession` を返し、Refiner はそれに `shrink/grow/focusNext/focusPrev/next/prev` を呼ぶ。内部は SEND_KEY + SpecialKey(LEFT/RIGHT/UP/SPACE) + ModifierKey(SHIFT) を実発行。
+- **学習の発生防止**: `RefinementSession` のデストラクタが `RESET_CONTEXT` → `DELETE_SESSION` の順で発行し、mozc 側に user_history が残らない。
+- **追加 SPACE ループ**: Refiner.dispatch(NextCandidate) → SPACE 送信 → mozc が「次候補」を Output.preedit に反映するので、これでサブモードのまま候補巡回ができる。
+
+注: 「focused segment」の追跡は mozc が Preedit.highlighted_position で示すが、現バージョンの抽出ではこれをまだ拾っていない (v0 では UI 側の focused 表示は常に segment 0 として描く)。M5 で実機検証時に対応。
 
 ### M2 で判明した点 (修正済み)
 
