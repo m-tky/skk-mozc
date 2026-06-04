@@ -68,7 +68,7 @@ index 5a84eaa..2976a0b 100644
  set_target_properties(skk PROPERTIES PREFIX "")
  install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
 diff --git a/src/skk.cpp b/src/skk.cpp
-index 19b564b..749d66f 100644
+index 19b564b..0893082 100644
 --- a/src/skk.cpp
 +++ b/src/skk.cpp
 @@ -48,6 +48,7 @@
@@ -135,21 +135,40 @@ index 19b564b..749d66f 100644
  
      if (auto str = UniqueCPtr<char, g_free>{skk_context_poll_output(context)}) {
          if (str && str.get()[0]) {
-@@ -761,9 +796,11 @@ void SkkState::updateUI() {
+@@ -761,17 +796,24 @@ void SkkState::updateUI() {
          return;
      }
  
 -    inputPanel.reset();
 -    if (candidateList) {
 -        inputPanel.setCandidateList(std::move(candidateList));
+-    }
 +    if (!mozc_owns_panel) {
 +        inputPanel.reset();
 +        if (candidateList) {
 +            inputPanel.setCandidateList(std::move(candidateList));
 +        }
-     }
  
-     if (ic_->capabilityFlags().test(CapabilityFlag::Preedit)) {
+-    if (ic_->capabilityFlags().test(CapabilityFlag::Preedit)) {
+-        inputPanel.setClientPreedit(preedit_);
+-        ic_->updatePreedit();
+-    } else {
+-        inputPanel.setPreedit(preedit_);
++        if (ic_->capabilityFlags().test(CapabilityFlag::Preedit)) {
++            inputPanel.setClientPreedit(preedit_);
++            ic_->updatePreedit();
++        } else {
++            inputPanel.setPreedit(preedit_);
++        }
+     }
++    // When mozc owns the panel we leave both the candidate list AND the
++    // preedit alone — MozcIntegration::mirrorFocusedCandidateToPreedit has
++    // already painted the focused candidate as inline preedit, and writing
++    // libskk's ▽yomi back here would wipe the preview the user is
++    // navigating.
+ 
+     ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+ }
 diff --git a/src/skk.h b/src/skk.h
 index ff5d874..086818b 100644
 --- a/src/skk.h

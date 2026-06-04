@@ -182,6 +182,24 @@ void clearMozcPanel(MozcIntegration::Impl *impl, fcitx::InputContext *ic,
 
 // ---- Implementations ----
 
+// Mirror the focused candidate of the active panel into the inline preedit
+// so the application shows a live preview of what would commit if the user
+// hit Enter. Standard SKK ▼ / mozc behaviour.
+void mirrorFocusedCandidateToPreedit(fcitx::InputContext *ic) {
+    auto *raw = ic->inputPanel().candidateList().get();
+    auto *list = dynamic_cast<fcitx::CommonCandidateList *>(raw);
+    if (!list) return;
+    int idx = list->globalCursorIndex();
+    if (idx < 0 || idx >= list->totalSize()) return;
+    auto display = list->candidate(idx).text().toString();
+    fcitx::Text pre;
+    pre.append(display, {fcitx::TextFormatFlag::Underline,
+                          fcitx::TextFormatFlag::HighLight});
+    ic->inputPanel().setClientPreedit(pre);
+    ic->inputPanel().setPreedit(pre);
+    ic->updatePreedit();
+}
+
 void installMergedPanel(MozcIntegration::Impl *impl,
                         fcitx::InputContext *ic,
                         std::string yomi,
@@ -230,6 +248,9 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     ic->inputPanel().setCandidateList(std::move(fcitx_list));
     impl->panel_active = true;
     impl->panel_yomi = std::move(yomi);
+    // Show the first candidate as inline preedit immediately so the
+    // application's cursor area reflects the conversion preview.
+    mirrorFocusedCandidateToPreedit(ic);
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
@@ -569,6 +590,9 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
 
     using A = skk_mozc::dispatch::PanelAction;
     auto refresh_ui = [&]() {
+        // Update the inline preedit before painting so the focused
+        // candidate is visible at the cursor position too.
+        mirrorFocusedCandidateToPreedit(ic);
         ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     };
 
