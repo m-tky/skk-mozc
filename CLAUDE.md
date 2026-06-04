@@ -163,11 +163,11 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 - **M0** ✅: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、ソーススケルトン)
 - **M1** ✅: Mozc IPC クライアントを単体テストで動かす (`mozc-client-cli`)
 - **M2** ✅ (ビルドのみ): fcitx5-skk patch + マージャ統合の `skk.so` がビルド完走。実機ロード検証は M5。
-- **M3** ✅ (実装+ビルド): 全文節変換 + RefinementSession による live mozc IPC 経由の境界調整 / 注目移動 / 候補巡回。recordCommit の libskk user dict 注入は M5 で実機検証時に詰める。
-- **M4**: HM モジュール統合、`nix flake check` で全 outputs ビルド
-- **M5**: 実機 (NixOS + HM) で fcitx5 にロードして動作確認、recordCommit の libskk 経路を完成、日常使用調整
+- **M3** ✅ (実装+ビルド): 全文節変換 + RefinementSession による live mozc IPC 経由の境界調整 / 注目移動 / 候補巡回。
+- **M4** ✅: `nix flake check` 全 outputs 通過。
+- **M5** ✅ (コード完成): recordCommit を libskk user dict (`skk_dict_select_candidate` + `skk_dict_save`) に接続、Preedit.highlighted_position から focused_segment を抽出、refinement モードの preedit を underline + HighLight の 3 段スライスで描画、候補 annotation を comment slot に。実機ロードは別途 NixOS マシンで HM 経由で行う。
 
-現状: **M4 進行中**。
+**現状: コードレベルで M0〜M5 すべて実装/ビルド完了。実機検証 (M5 残り) は NixOS マシン上での運用テスト。**
 
 ### M1 で判明した Mozc IPC の実仕様 (CLAUDE.md 当初記載との差分)
 
