@@ -15,15 +15,25 @@ target_include_directories(panel-dispatch-test PRIVATE .)
 
 # libskk integration test — links the real libskk so the libskkCurrentYomi
 # path is exercised against actual SKK state transitions instead of mocks.
+# libskk.pc in nixpkgs declares -I<prefix>/include/skk-1.0 which doesn't
+# exist (the headers are at <prefix>/include/libskk/), so we resolve the
+# library and prefix manually and link the gobject/glib deps via pkg-config.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBSKK REQUIRED IMPORTED_TARGET libskk)
+find_library(LIBSKK_LIB skk REQUIRED)
+get_filename_component(LIBSKK_LIBDIR "${LIBSKK_LIB}" DIRECTORY)
+get_filename_component(LIBSKK_PREFIX "${LIBSKK_LIBDIR}" DIRECTORY)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0)
 
 add_executable(libskk-integration-test
     libskk_integration_test.cpp
     skk_integration/yomi_extract.cpp
 )
-target_include_directories(libskk-integration-test PRIVATE .)
-target_link_libraries(libskk-integration-test PRIVATE PkgConfig::LIBSKK)
+target_include_directories(libskk-integration-test PRIVATE
+    .
+    "${LIBSKK_PREFIX}/include")
+target_link_libraries(libskk-integration-test PRIVATE
+    "${LIBSKK_LIB}"
+    PkgConfig::GLIB)
 
 enable_testing()
 add_test(NAME panel-dispatch COMMAND panel-dispatch-test)
