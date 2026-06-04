@@ -99,8 +99,12 @@ public:
     // integration layer to log "mozc unavailable" once per session.
     bool reachable() const { return reachable_; }
 
-private:
+    // Public so that helper functions in the .cpp anonymous namespace can
+    // touch it. Treat it as private; never reference it from outside the
+    // .cpp file.
     struct Impl;
+
+private:
     Impl *impl_;
     MozcClientOptions options_;
     bool reachable_ = true;
