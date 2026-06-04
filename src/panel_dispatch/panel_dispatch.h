@@ -21,7 +21,10 @@
 namespace skk_mozc::dispatch {
 
 enum class PanelKey {
-    Other = 0,    // any key we don't specifically recognise
+    Other = 0,    // function keys, modifiers — close panel quietly
+    Backspace,    // re-edit the yomi; libskk gets the keystroke
+    TextInput,    // printable ASCII (a-z, A-Z, punctuation) — start a new
+                  // SKK conversion, so commit the focused candidate first
     Space,
     Escape,
     CtrlG,
@@ -35,15 +38,17 @@ enum class PanelKey {
 };
 
 enum class PanelAction {
-    Ignore,         // do nothing (e.g. key release we don't care about)
-    Commit,         // commit candidate under the cursor + hard reset
-    CommitAtPage,   // commit candidate at page-relative index (carries digit)
-    NextCandidate,  // cursor++
-    PrevCandidate,  // cursor--
-    NextPage,       // page++ (no-op if !hasNext)
-    PrevPage,       // page-- (no-op if !hasPrev)
-    HardCancel,     // close panel AND reset libskk's ▽
-    SoftAbort,      // close panel; libskk ▽ kept; pass key through to libskk
+    Ignore,           // do nothing (e.g. key release we don't care about)
+    Commit,           // commit candidate under the cursor + hard reset
+    CommitAtPage,     // commit candidate at page-relative index (carries digit)
+    CommitAndForward, // commit focused candidate + forward the key to libskk
+                      // so the next SKK input starts from the typed key
+    NextCandidate,    // cursor++
+    PrevCandidate,    // cursor--
+    NextPage,         // page++ (no-op if !hasNext)
+    PrevPage,         // page-- (no-op if !hasPrev)
+    HardCancel,       // close panel AND reset libskk's ▽
+    SoftAbort,        // close panel; libskk ▽ kept; pass key through to libskk
 };
 
 struct PanelDecision {

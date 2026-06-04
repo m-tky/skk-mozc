@@ -60,14 +60,36 @@ PanelDecision decidePanelAction(PanelKey k,
                                    : PanelAction::Ignore;
         return out;
 
+    case PanelKey::Backspace:
+        // Re-edit the yomi: close the panel, libskk's ▽ stays intact, the
+        // Backspace itself goes to libskk so the next press shortens the
+        // yomi by one kana. Matches the standard SKK ▼ → Backspace → ▽
+        // transition.
+        out.action = PanelAction::SoftAbort;
+        return out;
+
+    case PanelKey::TextInput:
+        // Standard SKK semantics: typing a printable key in conversion
+        // mode commits the focused candidate and starts a new conversion
+        // with the typed character. Without this users had to press Enter
+        // first, which felt inconsistent.
+        if (cursor_global >= 0 && cursor_global < total_size) {
+            out.action = PanelAction::CommitAndForward;
+        } else {
+            // No focused candidate to commit; fall back to SoftAbort so
+            // the typed key still reaches libskk.
+            out.action = PanelAction::SoftAbort;
+        }
+        return out;
+
     default:
         if (isDigit(k)) {
             out.action = PanelAction::CommitAtPage;
             out.page_index = digitIndex(k);
             return out;
         }
-        // Any other key → close panel softly and let libskk see the key.
-        // This is how typing more letters or Backspace gets back to ▽ mode.
+        // Function keys, modifier-only events, etc. Close the panel
+        // quietly and let libskk see the key.
         out.action = PanelAction::SoftAbort;
         return out;
     }

@@ -139,11 +139,28 @@ int main() {
          dp::PanelKey::Digit9, 0, 9, false, false,
          dp::PanelAction::CommitAtPage, 8},
 
-        // --- Anything else falls through (SoftAbort): typing a letter
-        //     while the panel is open should close it and let libskk
-        //     extend the ▽ yomi.
+        // --- Anything else falls through (SoftAbort).
         {"Unknown key → SoftAbort",
          dp::PanelKey::Other, 0, 9, false, false,
+         dp::PanelAction::SoftAbort, -1},
+
+        // --- Backspace returns to ▽ for re-editing the yomi.
+        {"Backspace → SoftAbort (re-edit yomi)",
+         dp::PanelKey::Backspace, 0, 9, false, false,
+         dp::PanelAction::SoftAbort, -1},
+
+        // --- Text input commits the focused candidate and forwards the
+        //     keystroke. This is the user-reported bug: pressing Space to
+        //     navigate then typing the next char should commit the
+        //     focused candidate, not melt it back to hiragana.
+        {"TextInput with focused cand → CommitAndForward",
+         dp::PanelKey::TextInput, 0, 9, false, false,
+         dp::PanelAction::CommitAndForward, -1},
+        {"TextInput with cursor 5 → CommitAndForward",
+         dp::PanelKey::TextInput, 5, 9, false, false,
+         dp::PanelAction::CommitAndForward, -1},
+        {"TextInput with no cursor → SoftAbort",
+         dp::PanelKey::TextInput, -1, 0, false, false,
          dp::PanelAction::SoftAbort, -1},
     };
 

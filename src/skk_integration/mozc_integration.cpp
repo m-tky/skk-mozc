@@ -488,6 +488,7 @@ skk_mozc::dispatch::PanelKey classifyPanelKey(const fcitx::Key &k) {
         return PK::PageUp;
     if (k.check(FcitxKey_Page_Down) || k.check(FcitxKey_Next))
         return PK::PageDown;
+    if (k.check(FcitxKey_BackSpace))                   return PK::Backspace;
     if (k.check(FcitxKey_1)) return PK::Digit1;
     if (k.check(FcitxKey_2)) return PK::Digit2;
     if (k.check(FcitxKey_3)) return PK::Digit3;
@@ -497,6 +498,17 @@ skk_mozc::dispatch::PanelKey classifyPanelKey(const fcitx::Key &k) {
     if (k.check(FcitxKey_7)) return PK::Digit7;
     if (k.check(FcitxKey_8)) return PK::Digit8;
     if (k.check(FcitxKey_9)) return PK::Digit9;
+    // Any other printable ASCII (letters, punctuation) is treated as text
+    // input. We exclude modifier-only events so e.g. Shift alone doesn't
+    // accidentally commit. SKK feeds these to libskk for romaji→kana
+    // conversion or henkan-start triggers.
+    auto sym = static_cast<uint32_t>(k.sym());
+    bool modifier_only = k.states().test(fcitx::KeyState::Ctrl) ||
+                         k.states().test(fcitx::KeyState::Alt) ||
+                         k.states().test(fcitx::KeyState::Super);
+    if (!modifier_only && sym >= 0x20 && sym <= 0x7e) {
+        return PK::TextInput;
+    }
     return PK::Other;
 }
 
@@ -551,6 +563,20 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         }
         keyEvent.filterAndAccept();
         return true;
+    }
+    case A::CommitAndForward: {
+        // Commit the focused candidate (its select() callback runs
+        // full_reset, leaving libskk in a fresh ▽-less state), then return
+        // false WITHOUT filterAndAccept'ing so the key continues through
+        // SkkState::keyEvent to libskk — which then begins a new SKK input
+        // with the typed character.
+        int idx = list->globalCursorIndex();
+        if (idx >= 0 && idx < list->totalSize()) {
+            list->candidate(idx).select(ic);
+        } else {
+            clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
+        }
+        return false;
     }
     case A::NextCandidate:
         list->nextCandidate();
