@@ -65,6 +65,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
+    "-DENABLE_QT=Off"  # Configure UI is unused on this HM-driven build.
   ];
 
   meta = with lib; {
