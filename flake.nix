@@ -42,10 +42,16 @@
             skkMozcSources = ./src;
             skkMozcTests = ./tests;
           };
+          skk-mozc-e2e-test = pkgs.callPackage ./nix/e2e.nix {
+            skkMozcSources = ./src;
+            skkMozcTests = ./tests;
+            inherit fcitx5-skk-mozc;
+          };
         in
         {
           packages = {
-            inherit fcitx5-skk-mozc mozc-client-cli skk-mozc-tests;
+            inherit fcitx5-skk-mozc mozc-client-cli skk-mozc-tests
+                    skk-mozc-e2e-test;
             default = fcitx5-skk-mozc;
           };
 

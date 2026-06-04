@@ -39,6 +39,30 @@ enable_testing()
 add_test(NAME panel-dispatch COMMAND panel-dispatch-test)
 add_test(NAME libskk-integration COMMAND libskk-integration-test)
 
+# --- e2e_test ---------------------------------------------------------------
+# Real end-to-end test: links the actual fcitx5 instance + testfrontend +
+# our installed skk.so. Requires a reachable mozc_server at runtime, so we
+# don't run it inside the nix sandbox by default — the test runner sets
+# SKK_MOZC_RUN_E2E=1 explicitly when invoking it.
+option(SKK_MOZC_BUILD_E2E "Build the fcitx5 testfrontend-based e2e test" OFF)
+if(SKK_MOZC_BUILD_E2E)
+    pkg_check_modules(FCITX5_CORE REQUIRED IMPORTED_TARGET Fcitx5Core)
+    pkg_check_modules(FCITX5_UTILS REQUIRED IMPORTED_TARGET Fcitx5Utils)
+
+    add_executable(skk-mozc-e2e-test
+        e2e_test.cpp)
+    target_include_directories(skk-mozc-e2e-test PRIVATE
+        "${SKK_MOZC_FCITX5_INCLUDE_DIR}")
+    target_link_libraries(skk-mozc-e2e-test PRIVATE
+        PkgConfig::FCITX5_CORE
+        PkgConfig::FCITX5_UTILS)
+    target_compile_definitions(skk-mozc-e2e-test PRIVATE
+        TESTING_BINARY_DIR="${SKK_MOZC_E2E_RUNTIME_DIR}"
+        SKK_MOZC_ADDON_DIR="${SKK_MOZC_E2E_RUNTIME_DIR}/addons"
+        SKK_MOZC_DATA_DIR="${SKK_MOZC_E2E_RUNTIME_DIR}/data")
+    install(TARGETS skk-mozc-e2e-test DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS panel-dispatch-test libskk-integration-test
         DESTINATION ${CMAKE_INSTALL_BINDIR})
