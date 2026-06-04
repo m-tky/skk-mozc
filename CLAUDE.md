@@ -162,12 +162,12 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 
 - **M0** ✅: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、ソーススケルトン)
 - **M1** ✅: Mozc IPC クライアントを単体テストで動かす (`mozc-client-cli`)
-- **M2**: fcitx5-skk patch + マージャ統合、▽ SPC で SKK + Mozc 候補がマージされて出る
-- **M3**: 文節境界調整サブモードを実装
+- **M2** ✅ (ビルドのみ): fcitx5-skk patch + マージャ統合の `skk.so` がビルド完走。実機ロード検証は M5。
+- **M3**: 文節境界調整サブモード実装 + 追加 SPACE による全文節変換取得 + recordCommit の学習注入
 - **M4**: HM モジュール統合、`nix flake check` でビルド完走
-- **M5**: 実機 (NixOS + HM) で日常使用可能なレベルに調整
+- **M5**: 実機 (NixOS + HM) で fcitx5 にロードして動作確認、日常使用調整
 
-現状: **M2 進行中**。
+現状: **M3 進行中**。
 
 ### M1 で判明した Mozc IPC の実仕様 (CLAUDE.md 当初記載との差分)
 
@@ -185,6 +185,12 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 - `IPCPathInfo` proto は `src/ipc/ipc.proto` (commands.proto と別パッケージ)。ビルドに追加で取り込む。
 - 「わたしはがくせいです」のような長文をひと SPACE で投げると、Mozc は **第一文節のみ** 確定形を返す。完全な多文節変換結果を取るには文節をまたいだ追加 SPACE / CONVERT_NEXT_PAGE 等を発行する必要があり、これは M2/M3 で対応する。
 - 「さしみほうちょう」は Mozc も「刺し身」+「包丁」に文節分割するため、`top_candidates` には「刺身包丁」が出ない。これは Refiner で全文節を結合した値を別途生成して候補に加える必要がある。
+
+### M2 で判明した点 (修正済み)
+
+- fcitx5-skk 本体は Qt6 ベースの設定 GUI (`gui/`) を含むが、HM 経由の宣言的設定で運用するため `-DENABLE_QT=Off` でスキップ。
+- `mozc_integration.cpp::recordCommit` が `skk_candidate_new(midasi, gboolean okuri, text, annotation, output)` の 5 引数シグネチャに合わない 3 引数呼び出しになっており失敗。libskk の user dict 書き込み公式 API は実は `SkkCandidate` を作るだけでは持続化されず、`SkkUserDict` のハンドルに append する必要があるため、M3 までは stub に戻した (CLAUDE.md「オープン論点」に既に記載)。
+- Patch は全 3 ファイル (skk.h, skk.cpp, src/CMakeLists.txt) クリーン適用、`skk.so` 777 KB として生成、fcitx5/libskk/libprotobuf にリンク済み。
 
 ### M1 で疎通確認できた候補例
 

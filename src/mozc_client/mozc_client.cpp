@@ -93,19 +93,40 @@ MozcCandidate fromCandidateWord(const mc::CandidateWord &cw,
     return out;
 }
 
+// Mozc's `all_candidate_words` is per-segment (the currently focused one),
+// so for multi-bunsetsu input it only shows alternatives for the first
+// bunsetsu. The full-sentence conversion lives in `preedit.segment[].value`.
+// We prepend the concatenated form so SKK users see "私は学生です" instead
+// of just "私は" when they hit SPC on "わたしはがくせいです".
+std::string concatenatePreedit(const mc::Output &out) {
+    if (!out.has_preedit()) return {};
+    std::string s;
+    for (int i = 0; i < out.preedit().segment_size(); ++i) {
+        s += out.preedit().segment(i).value();
+    }
+    return s;
+}
+
 void extractTopCandidates(const mc::Output &out,
                           int max_candidates,
                           const std::string &yomi,
                           std::vector<MozcCandidate> &dst) {
-    if (!out.has_all_candidate_words()) {
-        return;
+    std::string full = concatenatePreedit(out);
+    if (!full.empty()) {
+        MozcCandidate c;
+        c.value = std::move(full);
+        c.reading = yomi;
+        c.cost = -1; // pin to the top: lower index than any per-segment cand
+        dst.push_back(std::move(c));
     }
-    const auto &all = out.all_candidate_words();
-    dst.reserve(static_cast<size_t>(all.candidates_size()));
-    for (int i = 0; i < all.candidates_size() &&
-                    static_cast<int>(dst.size()) < max_candidates;
-         ++i) {
-        dst.push_back(fromCandidateWord(all.candidates(i), yomi));
+    if (out.has_all_candidate_words()) {
+        const auto &all = out.all_candidate_words();
+        dst.reserve(dst.size() + static_cast<size_t>(all.candidates_size()));
+        for (int i = 0; i < all.candidates_size() &&
+                        static_cast<int>(dst.size()) < max_candidates;
+             ++i) {
+            dst.push_back(fromCandidateWord(all.candidates(i), yomi));
+        }
     }
 }
 
