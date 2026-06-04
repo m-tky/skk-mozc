@@ -195,8 +195,11 @@ void mirrorFocusedCandidateToPreedit(fcitx::InputContext *ic) {
     fcitx::Text pre;
     pre.append(display, {fcitx::TextFormatFlag::Underline,
                           fcitx::TextFormatFlag::HighLight});
+    // Inline preedit at the application's cursor position — yes.
     ic->inputPanel().setClientPreedit(pre);
-    ic->inputPanel().setPreedit(pre);
+    // NOT setPreedit(): that duplicates the focused candidate at the top
+    // of fcitx5's own candidate panel window, which the user finds
+    // distracting. The candidate list alone is enough there.
     ic->updatePreedit();
 }
 
