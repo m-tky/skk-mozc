@@ -1,8 +1,8 @@
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 5a84eaa..194c3ca 100644
+index 5a84eaa..da63581 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -1,12 +1,62 @@
+@@ -1,12 +1,63 @@
  
 +find_package(Protobuf REQUIRED)
 +# Modern protobuf (>= 22) requires absl. pkg-config gives the full link line
@@ -50,6 +50,7 @@ index 5a84eaa..194c3ca 100644
 +    candidate_merger/merger.cpp
 +    bunsetsu/refiner.cpp
 +    log/log.cpp
++    panel_dispatch/panel_dispatch.cpp
 +    skk_integration/mozc_integration.cpp
 +    ${SKK_MOZC_PROTO_SRCS}
  )

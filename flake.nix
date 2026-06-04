@@ -38,11 +38,20 @@
             inherit mozc-src;
             skkMozcSources = ./src;
           };
+          skk-mozc-tests = pkgs.callPackage ./nix/tests.nix {
+            skkMozcSources = ./src;
+            skkMozcTests = ./tests;
+          };
         in
         {
           packages = {
-            inherit fcitx5-skk-mozc mozc-client-cli;
+            inherit fcitx5-skk-mozc mozc-client-cli skk-mozc-tests;
             default = fcitx5-skk-mozc;
+          };
+
+          # `nix flake check` runs the test binary too.
+          checks = {
+            inherit skk-mozc-tests;
           };
 
           devShells.default = pkgs.mkShell {
