@@ -83,6 +83,7 @@ PanelDecision decidePanelAction(PanelKey k,
         return out;
 
     default:
+        // (fall through to the Other branch below)
         if (isDigit(k)) {
             out.action = PanelAction::CommitAtPage;
             out.page_index = digitIndex(k);
@@ -93,6 +94,36 @@ PanelDecision decidePanelAction(PanelKey k,
         out.action = PanelAction::SoftAbort;
         return out;
     }
+}
+
+bool isRefinementKey(PanelKey key) {
+    // The PanelKey enum currently has no explicit slot for refinement-only
+    // keys (Shift+Arrow / Tab). When the refinement sub-mode is re-added
+    // we'll add e.g. RefineFocusNext / RefineShrink members here. For now
+    // nothing qualifies, so the panel always wins.
+    (void)key;
+    return false;
+}
+
+RouteTarget decideRoute(const RouteState &state, PanelKey key) {
+    if (!state.panel_active) {
+        // No panel up. SPACE in ▽ mode opens one; everything else falls
+        // through to libskk (which keeps editing the yomi, applies romaji,
+        // etc.).
+        if (key == PanelKey::Space) return RouteTarget::OpenPanel;
+        return RouteTarget::Passthrough;
+    }
+    // Panel is up. The invariant the user-reported "ヤキニク... + 焼肉定食..."
+    // double-commit bug taught us: ENTER and SPACE must NEVER route to the
+    // refiner, because the refiner's commit() concatenates segment defaults
+    // while the panel's Commit fires the focused (full-sentence) candidate.
+    // Allowing both meant <enter><enter> committed twice with different
+    // strings. Only true refinement keys (boundary edits, segment focus)
+    // can ever escape to the refiner.
+    if (state.refiner_armed && isRefinementKey(key)) {
+        return RouteTarget::RefinerDispatch;
+    }
+    return RouteTarget::PanelDispatch;
 }
 
 } // namespace skk_mozc::dispatch

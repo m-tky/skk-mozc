@@ -355,16 +355,28 @@ bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
 
 bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
                                 fcitx::InputContext *ic) {
-    // 1. Bunsetsu refinement sub-mode wins everything.
-    if (impl_->refiner && !impl_->refiner->done()) {
+    if (keyEvent.isRelease()) {
+        // Release events do not drive state; bail before classification so
+        // we don't burn cycles on every key release.
+        return false;
+    }
+    namespace dp = skk_mozc::dispatch;
+    dp::RouteState st{
+        /*panel_active=*/impl_->panel_active,
+        /*refiner_armed=*/impl_->refiner && !impl_->refiner->done(),
+    };
+    auto target = dp::decideRoute(st, classifyPanelKey(keyEvent.key()));
+    switch (target) {
+    case dp::RouteTarget::RefinerDispatch:
         return handleRefinerKey_(keyEvent, ic);
-    }
-    // 2. If we already own the panel, route the key through panel control.
-    if (impl_->panel_active) {
+    case dp::RouteTarget::PanelDispatch:
         return handlePanelKey_(keyEvent, ic);
+    case dp::RouteTarget::OpenPanel:
+        return maybeOpenMozcPanel_(keyEvent, ic);
+    case dp::RouteTarget::Passthrough:
+        return false;
     }
-    // 3. Otherwise watch for SPC in ▽ mode to potentially open the panel.
-    return maybeOpenMozcPanel_(keyEvent, ic);
+    return false;
 }
 
 namespace {

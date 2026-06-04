@@ -166,6 +166,94 @@ int main() {
 
     for (const auto &c : cases) run(c);
 
-    std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
-    return g_fail == 0 ? 0 : 1;
+    // ----- decideRoute() tests -----
+    // These lock in the fix for the "Yakinikuteisyokugatabetainaa<space>
+    // <enter><enter> → ヤキニクテイショク... + 焼肉定食..." double-commit bug.
+    //
+    // The bug existed because the refiner and the panel were both armed at
+    // the same time and both claimed ENTER: the refiner's commit (segment
+    // concatenation) fired on the first Enter, the panel's commit (top
+    // candidate) fired on the second. Each test below pins down a routing
+    // decision that, if reverted, would let that regression back in.
+
+    struct RouteCase {
+        const char *name;
+        dp::RouteState state;
+        dp::PanelKey key;
+        dp::RouteTarget expected;
+    };
+    std::vector<RouteCase> route_cases = {
+        // No panel up: SPACE opens one, everything else passes through.
+        {"no panel + SPC → OpenPanel",
+         {/*panel*/false, /*refiner*/false},
+         dp::PanelKey::Space, dp::RouteTarget::OpenPanel},
+        {"no panel + ENTER → Passthrough",
+         {/*panel*/false, /*refiner*/false},
+         dp::PanelKey::Enter, dp::RouteTarget::Passthrough},
+        {"no panel + letter → Passthrough",
+         {/*panel*/false, /*refiner*/false},
+         dp::PanelKey::TextInput, dp::RouteTarget::Passthrough},
+
+        // Panel up, no refiner: panel handles all interaction.
+        {"panel + ENTER → PanelDispatch",
+         {/*panel*/true, /*refiner*/false},
+         dp::PanelKey::Enter, dp::RouteTarget::PanelDispatch},
+        {"panel + SPACE → PanelDispatch (next candidate)",
+         {/*panel*/true, /*refiner*/false},
+         dp::PanelKey::Space, dp::RouteTarget::PanelDispatch},
+        {"panel + ESC → PanelDispatch (hard cancel)",
+         {/*panel*/true, /*refiner*/false},
+         dp::PanelKey::Escape, dp::RouteTarget::PanelDispatch},
+        {"panel + digit → PanelDispatch",
+         {/*panel*/true, /*refiner*/false},
+         dp::PanelKey::Digit2, dp::RouteTarget::PanelDispatch},
+
+        // *** The double-commit regression guards. ***
+        // Even when a refiner is somehow armed alongside an active panel,
+        // ENTER and the navigation keys MUST go to the panel — never to
+        // the refiner — so we don't double-commit.
+        {"REGRESSION: panel + refiner + ENTER → PanelDispatch (no refiner!)",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::Enter, dp::RouteTarget::PanelDispatch},
+        {"REGRESSION: panel + refiner + SPACE → PanelDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::Space, dp::RouteTarget::PanelDispatch},
+        {"REGRESSION: panel + refiner + digit → PanelDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::Digit1, dp::RouteTarget::PanelDispatch},
+        {"REGRESSION: panel + refiner + ESC → PanelDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::Escape, dp::RouteTarget::PanelDispatch},
+        {"REGRESSION: panel + refiner + Up/Down/PageUp/PageDown → PanelDispatch",
+         {/*panel*/true, /*refiner*/true},
+         dp::PanelKey::Up, dp::RouteTarget::PanelDispatch},
+    };
+
+    int route_pass = 0, route_fail = 0;
+    auto routeTargetName = [](dp::RouteTarget t) -> const char * {
+        switch (t) {
+        case dp::RouteTarget::OpenPanel:       return "OpenPanel";
+        case dp::RouteTarget::PanelDispatch:   return "PanelDispatch";
+        case dp::RouteTarget::RefinerDispatch: return "RefinerDispatch";
+        case dp::RouteTarget::Passthrough:     return "Passthrough";
+        }
+        return "?";
+    };
+    for (const auto &rc : route_cases) {
+        auto got = dp::decideRoute(rc.state, rc.key);
+        bool ok = got == rc.expected;
+        if (ok) {
+            ++route_pass;
+            std::printf("[PASS] %s\n", rc.name);
+        } else {
+            ++route_fail;
+            std::printf("[FAIL] %s: got %s, expected %s\n", rc.name,
+                        routeTargetName(got), routeTargetName(rc.expected));
+        }
+    }
+
+    std::printf("\n%d passed, %d failed (incl. %d route + %d action)\n",
+                g_pass + route_pass, g_fail + route_fail,
+                route_pass, g_pass);
+    return (g_fail + route_fail) == 0 ? 0 : 1;
 }

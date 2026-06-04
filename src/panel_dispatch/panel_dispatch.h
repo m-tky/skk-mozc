@@ -69,6 +69,40 @@ PanelDecision decidePanelAction(PanelKey k,
                                 bool has_prev_page,
                                 bool has_next_page);
 
+// Higher-level routing decision: given the state of the integration
+// (whether the mozc panel and/or refinement sub-mode are active), where
+// should this key be dispatched?
+//
+// This is the seam where the "double commit" bug lived: when both panel
+// and refiner claimed Enter, two competing commits fired (the panel's
+// full-sentence top candidate vs. the refiner's segment-by-segment
+// concatenation), pasting both into the application. `decideRoute()`
+// codifies the invariant that ENTER (and the other panel-commit keys)
+// ALWAYS route to the panel — never to the refiner — so the regression
+// can be caught by unit tests without simulating real fcitx5 input.
+enum class RouteTarget {
+    OpenPanel,       // SPC interception while no panel is open
+    PanelDispatch,   // hand off to decidePanelAction()
+    RefinerDispatch, // refinement-specific keys (Shift+Arrow / Tab); only
+                     // valid when refiner_armed is true
+    Passthrough,     // let libskk see the key
+};
+
+struct RouteState {
+    bool panel_active  = false;
+    bool refiner_armed = false; // ignored entirely while the panel/refiner
+                                 // share ENTER and SPACE — see decideRoute().
+};
+
+// Returns where the key should go. Panel always wins ENTER / SPACE /
+// digits / arrows so the refiner cannot produce a competing commit.
+RouteTarget decideRoute(const RouteState &state, PanelKey key);
+
+// True iff `key` is one of the refinement-only keys the refiner would
+// legitimately consume (boundary editing, segment focus). All commit /
+// navigation keys are excluded so they stay with the panel.
+bool isRefinementKey(PanelKey key);
+
 } // namespace skk_mozc::dispatch
 
 #endif // FCITX5_SKK_MOZC_PANEL_DISPATCH_H_
