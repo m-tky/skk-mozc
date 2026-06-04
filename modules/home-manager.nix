@@ -69,10 +69,15 @@ in
     home.packages = [ cfg.package pkgs.mozc ];
 
     # Wire the addon into fcitx5 if home-manager's i18n.inputMethod is being
-    # used. We don't force it on so that users can integrate at the system
-    # (NixOS) level too.
+    # used. Supports both the legacy `enabled = "fcitx5"` syntax and the
+    # current `enable + type = "fcitx5"` form. We don't force it on so that
+    # users can integrate at the NixOS system level too.
     i18n.inputMethod = lib.mkIf
-      (config.i18n.inputMethod.enabled or null == "fcitx5") {
+      (
+        ((config.i18n.inputMethod.enabled or null) == "fcitx5")
+        || (((config.i18n.inputMethod.type or null) == "fcitx5")
+            && (config.i18n.inputMethod.enable or false))
+      ) {
         fcitx5.addons = [ cfg.package pkgs.mozc ];
       };
 
