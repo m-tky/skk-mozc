@@ -17,13 +17,6 @@
 , skkMozcPatches    # path: this repo's ./patches/fcitx5-skk
 }:
 
-let
-  # The proto file we vendor at build time, taken from the pinned mozc source.
-  # If mozc updates commands.proto incompatibly, our build will catch it.
-  mozcCommandsProto = "${mozc-src}/src/protocol/commands.proto";
-  mozcConfigProto   = "${mozc-src}/src/protocol/config.proto";
-in
-
 stdenv.mkDerivation (finalAttrs: {
   pname = "fcitx5-skk-mozc";
   version = "0.1.0-unstable";
@@ -56,27 +49,22 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   # Drop our additional sources into the upstream tree and stage the mozc
-  # protos so the patched CMakeLists.txt can find them.
+  # protos so the patched CMakeLists.txt can find them. Mirrors the layout the
+  # standalone CLI uses (proto/protocol/*.proto and proto/ipc/*.proto), so
+  # protoc invocations are identical.
   postPatch = ''
     cp -r ${skkMozcSources}/mozc_client      src/mozc_client
     cp -r ${skkMozcSources}/candidate_merger src/candidate_merger
     cp -r ${skkMozcSources}/bunsetsu         src/bunsetsu
     cp -r ${skkMozcSources}/skk_integration  src/skk_integration
 
-    mkdir -p src/proto
-    cp ${mozcCommandsProto} src/proto/commands.proto
-    cp ${mozcConfigProto}   src/proto/config.proto
-
-    # Mark the included tree as our customized variant.
-    if [ -f config.h.in ]; then
-      echo '#define FCITX5_SKK_MOZC_VARIANT 1' >> config.h.in
-    fi
+    mkdir -p src/proto/protocol src/proto/ipc
+    cp ${mozc-src}/src/protocol/*.proto src/proto/protocol/
+    cp ${mozc-src}/src/ipc/ipc.proto    src/proto/ipc/ipc.proto
   '';
 
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
-    "-DBUILD_SHARED_LIBS=ON"
-    "-DSKK_MOZC_ENABLE=ON"
   ];
 
   meta = with lib; {

@@ -1,17 +1,42 @@
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 5a84eaa..597d789 100644
+index 5a84eaa..b541124 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -1,12 +1,31 @@
+@@ -1,12 +1,56 @@
  
 +find_package(Protobuf REQUIRED)
 +
 +set(SKK_MOZC_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
-+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/proto")
++file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/protocol")
++file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ipc")
 +
-+protobuf_generate_cpp(SKK_MOZC_PROTO_SRCS SKK_MOZC_PROTO_HDRS
-+    "${SKK_MOZC_PROTO_DIR}/commands.proto"
-+    "${SKK_MOZC_PROTO_DIR}/config.proto")
++set(SKK_MOZC_PROTO_FILES
++    protocol/commands.proto
++    protocol/candidate_window.proto
++    protocol/config.proto
++    protocol/engine_builder.proto
++    protocol/user_dictionary_storage.proto
++    protocol/renderer_command.proto
++    protocol/renderer_style.proto
++    ipc/ipc.proto
++)
++
++set(SKK_MOZC_PROTO_SRCS)
++foreach(P ${SKK_MOZC_PROTO_FILES})
++    get_filename_component(DIR ${P} DIRECTORY)
++    get_filename_component(BASE ${P} NAME_WE)
++    set(OUT_CC "${CMAKE_CURRENT_BINARY_DIR}/${DIR}/${BASE}.pb.cc")
++    set(OUT_H  "${CMAKE_CURRENT_BINARY_DIR}/${DIR}/${BASE}.pb.h")
++    add_custom_command(
++        OUTPUT  ${OUT_CC} ${OUT_H}
++        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
++                --cpp_out=${CMAKE_CURRENT_BINARY_DIR}
++                -I${SKK_MOZC_PROTO_DIR}
++                ${SKK_MOZC_PROTO_DIR}/${P}
++        DEPENDS ${SKK_MOZC_PROTO_DIR}/${P}
++        COMMENT "protoc ${P}")
++    list(APPEND SKK_MOZC_PROTO_SRCS ${OUT_CC})
++endforeach()
 +
  set(SKK_SOURCES
      skk.cpp
@@ -34,24 +59,6 @@ index 5a84eaa..597d789 100644
  )
  set_target_properties(skk PROPERTIES PREFIX "")
  install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
-@@ -18,3 +37,17 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skk-addon.conf" RENAME skk.conf DESTI
- 
- configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dictionary_list.in ${CMAKE_CURRENT_BINARY_DIR}/dictionary_list @ONLY)
- install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dictionary_list DESTINATION "${FCITX_INSTALL_PKGDATADIR}/skk")
-+
-+option(SKK_MOZC_BUILD_CLI "Also build mozc-client-cli" OFF)
-+if(SKK_MOZC_BUILD_CLI)
-+    add_executable(mozc-client-cli
-+        mozc_client/cli_main.cpp
-+        mozc_client/mozc_client.cpp
-+        mozc_client/ipc_socket.cpp
-+        ${SKK_MOZC_PROTO_SRCS})
-+    target_include_directories(mozc-client-cli PRIVATE
-+        "${CMAKE_CURRENT_SOURCE_DIR}"
-+        "${CMAKE_CURRENT_BINARY_DIR}")
-+    target_link_libraries(mozc-client-cli ${Protobuf_LIBRARIES})
-+    install(TARGETS mozc-client-cli DESTINATION "${CMAKE_INSTALL_BINDIR}")
-+endif()
 diff --git a/src/skk.cpp b/src/skk.cpp
 index 19b564b..1b9c73e 100644
 --- a/src/skk.cpp

@@ -160,14 +160,41 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 
 ## マイルストーン
 
-- **M0**: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、空のソース)
-- **M1**: Mozc IPC クライアントを単体テストで動かす (`mozc-client-cli` 補助バイナリ: yomi を引数に取って候補を出力)
+- **M0** ✅: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、ソーススケルトン)
+- **M1** ✅: Mozc IPC クライアントを単体テストで動かす (`mozc-client-cli`)
 - **M2**: fcitx5-skk patch + マージャ統合、▽ SPC で SKK + Mozc 候補がマージされて出る
 - **M3**: 文節境界調整サブモードを実装
 - **M4**: HM モジュール統合、`nix flake check` でビルド完走
 - **M5**: 実機 (NixOS + HM) で日常使用可能なレベルに調整
 
-現状: **M0 進行中**。
+現状: **M2 進行中**。
+
+### M1 で判明した Mozc IPC の実仕様 (CLAUDE.md 当初記載との差分)
+
+実装中に CLI で疎通させた結果、当初推測していた仕様と異なる点が 4 つあった。コードはすべて実仕様に合わせて修正済み。
+
+| 項目 | 当初の推測 (誤) | 実仕様 (正) |
+|------|----------------|-------------|
+| ソケットパス | `$XDG_RUNTIME_DIR/.mozc.<uid>.session` (ファイル UNIX socket) | `~/.config/mozc/.session.ipc` を rendezvous file として読み、中の `mozc.ipc.IPCPathInfo` proto の `key` フィールドを取り出し、abstract socket `\0tmp/.mozc.<key>.session` に接続 |
+| 変換トリガ | `SessionCommand::CONVERT` を送る | `SessionCommand::CONVERT` は存在しない。SEND_KEY で SPACE (special_key=SPACE) を送ると mozc セッションが内部状態で変換に遷移 |
+| 候補ランキング | `CandidateWord.cost()` | `CandidateWord` に cost フィールドはない。`CandidateWord.index()` (mozc 内部ランク) が利用可能で、これを cost 代用として merger に渡す |
+| メッセージフレーミング | 4-byte little-endian length prefix + protobuf payload | フレーム長は無く、`send(payload) → shutdown(SHUT_WR) → recv until EOF → close` で 1 メッセージ。サーバ側も同じプロトコル |
+
+副次的な発見:
+- `commands.proto` は `protocol/candidate_window.proto`, `protocol/config.proto`, `protocol/engine_builder.proto`, `protocol/user_dictionary_storage.proto` を import する。protoc に `-I proto` を渡し、`proto/protocol/*.proto` 配下に全 proto を staged する必要がある。
+- `IPCPathInfo` proto は `src/ipc/ipc.proto` (commands.proto と別パッケージ)。ビルドに追加で取り込む。
+- 「わたしはがくせいです」のような長文をひと SPACE で投げると、Mozc は **第一文節のみ** 確定形を返す。完全な多文節変換結果を取るには文節をまたいだ追加 SPACE / CONVERT_NEXT_PAGE 等を発行する必要があり、これは M2/M3 で対応する。
+- 「さしみほうちょう」は Mozc も「刺し身」+「包丁」に文節分割するため、`top_candidates` には「刺身包丁」が出ない。これは Refiner で全文節を結合した値を別途生成して候補に加える必要がある。
+
+### M1 で疎通確認できた候補例
+
+| 入力 (yomi) | 先頭 mozc 候補 | コメント |
+|-------------|---------------|---------|
+| あさひしんぶん | 朝日新聞 | 単一文節で正常 |
+| けいざいさんぎょうしょう | 経済産業省 | 4 漢字複合語が一発で出る |
+| きょうのてんき | 今日の天気 | 多文節統合済み (mozc 側で 1 候補化) |
+| さしみほうちょう | 刺し身 | 「包丁」が落ちる。M3 Refiner の合成で復元想定 |
+| わたしはがくせいです | 私は | 第一文節のみ。M2 で追加 SPACE 発行 |
 
 ## 開発
 
