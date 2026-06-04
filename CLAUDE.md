@@ -158,6 +158,15 @@ CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEN
 ```
 としてセッションを破棄。学習はすべて SKK 個人辞書 (~/.skk-jisyo) に任せる。
 
+## fcitx5-mozc との同居について
+
+ユーザが fcitx5-mozc アドオン (`mozc` IM = 単独 mozc 入力) を有効化したまま skk-mozc を併用すると、両者は **同じ `mozc_server` インスタンスを共用** します。これは設計上意図的 (HM module でも `pkgs.mozc` を入れているのは server バイナリ提供のため) ですが、以下の挙動に注意:
+
+- skk-mozc は **pure lookup の前提** で動いており、commit を mozc 側に伝えません (`SUBMIT` を送らず、`RESET_CONTEXT` + `DELETE_SESSION` でセッションを破棄)。
+- fcitx5-mozc を使って入力した語は mozc の `user_history` に学習され、その学習結果は skk-mozc の query にも反映されます (片方向の影響)。
+- これは大抵のケースで「便利」(fcitx5-mozc で打った語が skk-mozc にも出る) ですが、「skk 個人辞書 (~/.skk-jisyo) のみで学習を一本化したい」という設計と緩く矛盾します。
+- 完全に分離したいユーザは fcitx5-mozc を addons から外すか、別ユーザで運用してください。
+
 ## マイルストーン
 
 - **M0** ✅: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、ソーススケルトン)

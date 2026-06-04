@@ -69,6 +69,11 @@ struct MozcClientOptions {
     // Optional override for the IPC socket path. Empty = default.
     std::string socket_path_override;
     bool debug = false;
+    // LRU cache for repeated queries: when the user types a yomi, hits
+    // SPC, edits a character, hits SPC again with the same yomi, the IPC
+    // roundtrip is skipped on hit. 0 disables caching.
+    size_t cache_capacity = 16;
+    std::chrono::milliseconds cache_ttl = std::chrono::milliseconds(5000);
 };
 
 class RefinementSession;

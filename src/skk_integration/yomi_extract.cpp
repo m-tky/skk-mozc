@@ -19,6 +19,16 @@ std::string libskkCurrentYomi(SkkContext *ctx) {
     std::string s = preedit;
     if (s.rfind(kTriangleDown, 0) != 0) return {};
     s.erase(0, kTriangleDown.size());
+    // Okurigana mode (▽X*Y, where X is the henkan stem and Y is the
+    // okurigana suffix): drop the '*' separator and feed the concatenated
+    // kana to mozc. Mozc handles verb / adjective conjugations natively, so
+    // X+Y is a valid query — we just lose SKK's own per-stem 送りあり
+    // matching, which is acceptable since the user's personal dict will
+    // pick up commonly used pairs.
+    size_t star = s.find('*');
+    if (star != std::string::npos) {
+        s.erase(star, 1);
+    }
     // Defensive: strip any stray SKK markers that occasionally leak through
     // when libskk's preedit assembly is mid-transition.
     static const std::array<std::string, 3> kStrayMarkers = {

@@ -142,6 +142,27 @@ int main() {
         g_object_unref(ctx);
     }
 
+    // === Scenario 5.5: okurigana mode (▽X*Y) drops the '*' separator ===
+    // Type "Okuru" → ▽お*る. We expect libskkCurrentYomi to return "おる"
+    // — the * is stripped so mozc can convert it as a verb.
+    {
+        SkkContext *ctx = makeContext();
+        feed(ctx, "O k u R u");
+        const gchar *preedit = skk_context_get_preedit(ctx);
+        std::string p = preedit ? preedit : "";
+        std::printf("  scenario5.5 preedit=\"%s\"\n", p.c_str());
+        auto y = skk_mozc::libskkCurrentYomi(ctx);
+        std::printf("  scenario5.5 yomi=\"%s\"\n", y.c_str());
+        // The yomi mozc gets is the concatenation of stem + okurigana
+        // with no marker. libskk's exact preedit varies slightly with
+        // its rule; what matters is that we extract clean kana for mozc.
+        bool no_star = y.find('*') == std::string::npos;
+        bool no_marker = y.find("\xe2\x96\xbd") == std::string::npos;
+        CHECK(no_star && no_marker,
+              "okurigana yomi has no * and no ▽ marker");
+        g_object_unref(ctx);
+    }
+
     // === Scenario 5: end-to-end carry-over check ===
     // Mirrors the user-reported bug: convert A, abort, convert B → must NOT
     // see A's yomi concatenated.

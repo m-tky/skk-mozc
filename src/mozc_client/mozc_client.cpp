@@ -28,7 +28,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <list>
 #include <thread>
+#include <unordered_map>
 
 namespace skk_mozc {
 
@@ -38,6 +40,51 @@ struct MozcClient::Impl {
     std::vector<uint8_t> socket_address;
     uint64_t session_id = 0;
     bool warned_unavailable = false;
+
+    // LRU cache: list keeps insertion order (front = most recent), map gives
+    // O(1) lookup to the list node.
+    struct CacheEntry {
+        std::string yomi;
+        MozcConversionResult result;
+        std::chrono::steady_clock::time_point inserted_at;
+    };
+    std::list<CacheEntry> cache_lru;
+    std::unordered_map<std::string,
+                       std::list<CacheEntry>::iterator> cache_index;
+
+    void cachePut(const std::string &yomi,
+                  const MozcConversionResult &result,
+                  size_t capacity) {
+        if (capacity == 0) return;
+        if (auto it = cache_index.find(yomi); it != cache_index.end()) {
+            cache_lru.erase(it->second);
+            cache_index.erase(it);
+        }
+        cache_lru.push_front(
+            {yomi, result, std::chrono::steady_clock::now()});
+        cache_index[yomi] = cache_lru.begin();
+        while (cache_lru.size() > capacity) {
+            cache_index.erase(cache_lru.back().yomi);
+            cache_lru.pop_back();
+        }
+    }
+
+    std::optional<MozcConversionResult>
+    cacheGet(const std::string &yomi,
+             std::chrono::milliseconds ttl) {
+        auto it = cache_index.find(yomi);
+        if (it == cache_index.end()) return std::nullopt;
+        auto age = std::chrono::steady_clock::now() - it->second->inserted_at;
+        if (age > ttl) {
+            cache_lru.erase(it->second);
+            cache_index.erase(it);
+            return std::nullopt;
+        }
+        // Promote to front (LRU touch).
+        cache_lru.splice(cache_lru.begin(), cache_lru, it->second);
+        it->second = cache_lru.begin();
+        return it->second->result;
+    }
 
     std::optional<std::vector<uint8_t>>
     roundtrip(const mc::Input &input, std::chrono::milliseconds timeout) {
@@ -241,6 +288,10 @@ MozcClient::convert(const std::string &yomi) {
         return std::nullopt;
     }
     SKK_MOZC_LOG("convert: yomi=\"%s\"", yomi.c_str());
+    if (auto cached = impl_->cacheGet(yomi, options_.cache_ttl)) {
+        SKK_MOZC_LOG("convert: cache HIT for yomi=\"%s\"", yomi.c_str());
+        return cached;
+    }
     if (!ensureServerReachable(*impl_, options_)) {
         reachable_ = false;
         return std::nullopt;
@@ -296,6 +347,7 @@ MozcClient::convert(const std::string &yomi) {
     if (result.top_candidates.empty() && result.segments.empty()) {
         return std::nullopt;
     }
+    impl_->cachePut(yomi, result, options_.cache_capacity);
     return result;
 }
 
