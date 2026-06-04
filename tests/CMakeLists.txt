@@ -13,9 +13,22 @@ add_executable(panel-dispatch-test
 )
 target_include_directories(panel-dispatch-test PRIVATE .)
 
+# libskk integration test — links the real libskk so the libskkCurrentYomi
+# path is exercised against actual SKK state transitions instead of mocks.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBSKK REQUIRED IMPORTED_TARGET libskk)
+
+add_executable(libskk-integration-test
+    libskk_integration_test.cpp
+    skk_integration/yomi_extract.cpp
+)
+target_include_directories(libskk-integration-test PRIVATE .)
+target_link_libraries(libskk-integration-test PRIVATE PkgConfig::LIBSKK)
+
 enable_testing()
 add_test(NAME panel-dispatch COMMAND panel-dispatch-test)
+add_test(NAME libskk-integration COMMAND libskk-integration-test)
 
 include(GNUInstallDirs)
-install(TARGETS panel-dispatch-test
+install(TARGETS panel-dispatch-test libskk-integration-test
         DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -10,6 +10,7 @@
 #include "../log/log.h"
 #include "../mozc_client/mozc_client.h"
 #include "../panel_dispatch/panel_dispatch.h"
+#include "yomi_extract.h"
 
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/keysym.h>
@@ -99,32 +100,9 @@ int utf8Chars(const std::string &s) {
     return n;
 }
 
-std::string libskkCurrentYomi(SkkContext *ctx) {
-    // We only care about ▽ mode (yomi input). In ▼ mode the preedit contains
-    // an already-converted candidate (e.g. "▼朝日"), which is not a usable
-    // mozc query. Returning empty makes the caller skip mozc work entirely
-    // for non-▽ states, which is what we want until the SPC-intercept
-    // redesign lands.
-    const gchar *preedit = skk_context_get_preedit(ctx);
-    if (!preedit) return {};
-    static const std::string kTriangleDown = "\xe2\x96\xbd"; // ▽ U+25BD
-    std::string s = preedit;
-    if (s.rfind(kTriangleDown, 0) != 0) return {};
-    s.erase(0, kTriangleDown.size());
-    // Defensive: strip any other stray SKK markers if present.
-    static const std::array<std::string, 3> kStrayMarkers = {
-        "\xe2\x96\xbc", // ▼
-        "\xe2\x96\xb3", // △
-        "\xe2\x96\xb2", // ▲
-    };
-    for (const auto &m : kStrayMarkers) {
-        size_t pos;
-        while ((pos = s.find(m)) != std::string::npos) {
-            s.erase(pos, m.size());
-        }
-    }
-    return s;
-}
+// libskkCurrentYomi has moved to ../skk_integration/yomi_extract.cpp so the
+// libskk-talking part can be unit-tested independently.
+using ::skk_mozc::libskkCurrentYomi;
 
 } // namespace
 
