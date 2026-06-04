@@ -483,16 +483,25 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
     auto *raw = ic->inputPanel().candidateList().get();
     auto *list = dynamic_cast<fcitx::CommonCandidateList *>(raw);
     if (!list) {
-        impl_->panel_active = false;
+        SKK_MOZC_LOG("panel: panel_active but no CommonCandidateList — "
+                     "force-clearing");
+        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         return false;
     }
     const auto &key = keyEvent.key();
+    SKK_MOZC_LOG("panel: key sym=0x%x states=0x%x cursor=%d total=%d",
+                 static_cast<unsigned>(key.sym()),
+                 static_cast<unsigned>(key.states()),
+                 list->globalCursorIndex(), list->totalSize());
 
-    // ESC / Ctrl+G: cancel mozc augmentation, leave libskk in its ▽ state.
+    // ESC / Ctrl+G: hard cancel. We drop libskk's ▽ preedit too so the next
+    // SPC starts from a clean state — matches SKK's "C-g aborts everything"
+    // convention. Soft-cancel (preserve ▽ for re-editing) is reachable by
+    // typing more characters: those fall through and extend the yomi.
     if (key.check(FcitxKey_Escape) ||
         key.check(FcitxKey_g, fcitx::KeyState::Ctrl)) {
-        SKK_MOZC_LOG("panel: ESC — cancelling, restoring SKK ▽");
-        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
+        SKK_MOZC_LOG("panel: ESC/C-g — hard cancel (clearing libskk ▽ too)");
+        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         keyEvent.filterAndAccept();
         return true;
     }
@@ -501,6 +510,8 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
     if (key.check(FcitxKey_Return)) {
         int idx = list->globalCursorIndex();
         if (idx < 0) idx = 0;
+        SKK_MOZC_LOG("panel: Enter — committing idx=%d/%d", idx,
+                     list->totalSize());
         if (idx < list->totalSize()) {
             list->candidate(idx).select(ic);
         }
@@ -511,6 +522,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
     // SPC / Down: next candidate. Up: previous.
     if (key.check(FcitxKey_space) || key.check(FcitxKey_Down)) {
         list->nextCandidate();
+        SKK_MOZC_LOG("panel: next — cursor now %d", list->globalCursorIndex());
         ic->updateUserInterface(
             fcitx::UserInterfaceComponent::InputPanel);
         keyEvent.filterAndAccept();
@@ -518,6 +530,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
     }
     if (key.check(FcitxKey_Up)) {
         list->prevCandidate();
+        SKK_MOZC_LOG("panel: prev — cursor now %d", list->globalCursorIndex());
         ic->updateUserInterface(
             fcitx::UserInterfaceComponent::InputPanel);
         keyEvent.filterAndAccept();
@@ -528,6 +541,8 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
     if (key.check(FcitxKey_Page_Up) || key.check(FcitxKey_Prior)) {
         if (list->hasPrev()) {
             list->prev();
+            SKK_MOZC_LOG("panel: prev page — now on page %d",
+                         list->currentPage());
             ic->updateUserInterface(
                 fcitx::UserInterfaceComponent::InputPanel);
         }
@@ -537,6 +552,8 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
     if (key.check(FcitxKey_Page_Down) || key.check(FcitxKey_Next)) {
         if (list->hasNext()) {
             list->next();
+            SKK_MOZC_LOG("panel: next page — now on page %d",
+                         list->currentPage());
             ic->updateUserInterface(
                 fcitx::UserInterfaceComponent::InputPanel);
         }
@@ -544,27 +561,33 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         return true;
     }
 
-    // Digit 1-9, 0: direct selection on the current page.
-    static const std::array<fcitx::KeySym, 10> kDigits = {
+    // Digit 1-9: direct selection on the current page.
+    static const std::array<fcitx::KeySym, 9> kDigits = {
         FcitxKey_1, FcitxKey_2, FcitxKey_3, FcitxKey_4, FcitxKey_5,
-        FcitxKey_6, FcitxKey_7, FcitxKey_8, FcitxKey_9, FcitxKey_0,
+        FcitxKey_6, FcitxKey_7, FcitxKey_8, FcitxKey_9,
     };
     for (size_t i = 0; i < kDigits.size(); ++i) {
         if (key.check(kDigits[i])) {
             int page_start = list->currentPage() * list->pageSize();
             int idx = page_start + static_cast<int>(i);
+            SKK_MOZC_LOG("panel: digit %zu — selecting idx=%d/%d", i + 1, idx,
+                         list->totalSize());
             if (idx < list->totalSize()) {
                 list->candidate(idx).select(ic);
+            } else {
+                SKK_MOZC_LOG("panel: digit %zu — out of range, ignoring",
+                             i + 1);
             }
             keyEvent.filterAndAccept();
             return true;
         }
     }
 
-    // Any other key: cancel the panel and let libskk see the key. This
-    // matches Mozc's UX where typing a non-navigation key abandons the
-    // current conversion.
-    SKK_MOZC_LOG("panel: unhandled key — cancelling, deferring to libskk");
+    // Any other key: cancel the panel (libskk's ▽ preserved so the user can
+    // keep editing the yomi by typing more characters or Backspace).
+    SKK_MOZC_LOG("panel: unhandled key (sym=0x%x) — soft-aborting, deferring "
+                 "to libskk",
+                 static_cast<unsigned>(key.sym()));
     clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
     return false;
 }
