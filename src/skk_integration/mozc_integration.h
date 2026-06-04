@@ -39,10 +39,15 @@ struct IntegrationOptions {
     int ipc_timeout_ms = 50;
     int max_mozc_candidates = 20;
     bool debug = false;
+    // Absolute path to mozc_server. On most distros it's in $PATH as
+    // "mozc_server", but Nix-installed mozc places it at
+    // <store>/lib/mozc/mozc_server (not on $PATH), so the HM module sets
+    // this explicitly via SKK_MOZC_MOZC_SERVER.
+    std::string mozc_server_path;
 
     // Reads SKK_MOZC_ENABLE / SKK_MOZC_IPC_TIMEOUT_MS /
-    // SKK_MOZC_MAX_CANDIDATES / SKK_MOZC_DEBUG from the environment. Anything
-    // unset falls back to the defaults above.
+    // SKK_MOZC_MAX_CANDIDATES / SKK_MOZC_DEBUG / SKK_MOZC_MOZC_SERVER from
+    // the environment. Anything unset falls back to the defaults above.
     static IntegrationOptions fromEnv();
 };
 

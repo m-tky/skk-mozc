@@ -56,7 +56,20 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (
+    let
+      # Nix's mozc package installs mozc_server at lib/mozc/mozc_server (not
+      # on $PATH). Pin the absolute path so the addon's lazy-start logic can
+      # find it without depending on the user's PATH.
+      mozcServerPath = "${pkgs.mozc}/lib/mozc/mozc_server";
+      mozcEnv = {
+        SKK_MOZC_ENABLE = if cfg.mozc.enable then "1" else "0";
+        SKK_MOZC_IPC_TIMEOUT_MS = toString cfg.mozc.ipcTimeoutMs;
+        SKK_MOZC_MAX_CANDIDATES = toString cfg.mozc.maxCandidates;
+        SKK_MOZC_DEBUG = if cfg.debug then "1" else "0";
+        SKK_MOZC_MOZC_SERVER = mozcServerPath;
+      };
+    in {
     home.packages = [ cfg.package pkgs.mozc ];
 
     # Wire the addon into fcitx5 if home-manager's i18n.inputMethod is being
@@ -72,14 +85,15 @@ in
         fcitx5.addons = [ cfg.package pkgs.mozc ];
       };
 
-    # Runtime config. The addon reads these from the env on startup since
-    # the legacy fcitx5-skk config schema doesn't know about mozc fields.
-    home.sessionVariables = lib.mkIf cfg.enable {
-      SKK_MOZC_ENABLE = if cfg.mozc.enable then "1" else "0";
-      SKK_MOZC_IPC_TIMEOUT_MS = toString cfg.mozc.ipcTimeoutMs;
-      SKK_MOZC_MAX_CANDIDATES = toString cfg.mozc.maxCandidates;
-      SKK_MOZC_DEBUG = if cfg.debug then "1" else "0";
-    };
+    # Runtime config. The addon reads these on startup; fcitx5-skk's existing
+    # config schema does not know about mozc fields.
+    #
+    # NOTE: fcitx5 typically runs as a systemd --user service, which does NOT
+    # inherit `home.sessionVariables` (those only land in interactive shells
+    # via ~/.config/hm-session-vars.sh). We must mirror them into
+    # `systemd.user.sessionVariables` so the daemon environment sees them.
+    home.sessionVariables = mozcEnv;
+    systemd.user.sessionVariables = mozcEnv;
 
     # SKK dictionaries themselves are not managed by this module; users
     # configure them via the standard fcitx5-skk location at
@@ -93,5 +107,5 @@ in
       fi
       run mkdir -p $HOME/.cache/skk-mozc
     '';
-  };
+  });
 }

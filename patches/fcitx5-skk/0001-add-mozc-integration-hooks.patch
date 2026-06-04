@@ -1,8 +1,8 @@
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 5a84eaa..b541124 100644
+index 5a84eaa..66aa85e 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -1,12 +1,56 @@
+@@ -1,12 +1,57 @@
  
 +find_package(Protobuf REQUIRED)
 +
@@ -44,6 +44,7 @@ index 5a84eaa..b541124 100644
 +    mozc_client/ipc_socket.cpp
 +    candidate_merger/merger.cpp
 +    bunsetsu/refiner.cpp
++    log/log.cpp
 +    skk_integration/mozc_integration.cpp
 +    ${SKK_MOZC_PROTO_SRCS}
  )

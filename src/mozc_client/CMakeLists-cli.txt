@@ -52,6 +52,7 @@ add_executable(mozc-client-cli
     mozc_client/cli_main.cpp
     mozc_client/mozc_client.cpp
     mozc_client/ipc_socket.cpp
+    log/log.cpp
     ${PROTO_GENERATED}
 )
 target_include_directories(mozc-client-cli PRIVATE

@@ -22,6 +22,7 @@
 
 #include "mozc_client.h"
 #include "ipc_socket.h"
+#include "../log/log.h"
 #include "protocol/commands.pb.h"
 
 #include <chrono>
@@ -180,19 +181,26 @@ bool ensureServerReachable(MozcClient::Impl &impl,
     if (!impl.socket_address.empty() && impl.call(ping, opts.timeout)) {
         return true;
     }
+    SKK_MOZC_LOG("mozc_server probe failed (socket %s); lazy-start \"%s\"",
+                 impl.socket_address.empty() ? "missing" : "present",
+                 opts.mozc_server_path.c_str());
     if (ipc::spawnServer(opts.mozc_server_path)) {
         for (int i = 0; i < 6; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             impl.socket_address =
                 ipc::resolveSocketAddress(opts.socket_path_override);
             if (!impl.socket_address.empty() && impl.call(ping, opts.timeout)) {
+                SKK_MOZC_LOG("mozc_server reachable after lazy-start");
                 return true;
             }
         }
     }
-    if (!impl.warned_unavailable && opts.debug) {
-        std::fprintf(stderr,
-                     "[skk-mozc] mozc_server unreachable; SKK only.\n");
+    if (!impl.warned_unavailable) {
+        SKK_MOZC_LOG("mozc_server unreachable; falling back to SKK only");
+        if (opts.debug) {
+            std::fprintf(stderr,
+                         "[skk-mozc] mozc_server unreachable; SKK only.\n");
+        }
         impl.warned_unavailable = true;
     }
     return false;

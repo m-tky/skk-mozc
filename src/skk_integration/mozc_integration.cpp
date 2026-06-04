@@ -7,6 +7,7 @@
 
 #include "../bunsetsu/refiner.h"
 #include "../candidate_merger/merger.h"
+#include "../log/log.h"
 #include "../mozc_client/mozc_client.h"
 
 #include <fcitx-utils/key.h>
@@ -62,11 +63,16 @@ IntegrationOptions IntegrationOptions::fromEnv() {
         }
         return fallback;
     };
+    auto readStr = [](const char *name, std::string fallback) {
+        if (const char *v = std::getenv(name); v && *v) return std::string(v);
+        return fallback;
+    };
     o.mozc_enabled = readBool("SKK_MOZC_ENABLE", o.mozc_enabled);
     o.ipc_timeout_ms = readInt("SKK_MOZC_IPC_TIMEOUT_MS", o.ipc_timeout_ms);
     o.max_mozc_candidates = readInt("SKK_MOZC_MAX_CANDIDATES",
                                     o.max_mozc_candidates);
     o.debug = readBool("SKK_MOZC_DEBUG", o.debug);
+    o.mozc_server_path = readStr("SKK_MOZC_MOZC_SERVER", "");
     return o;
 }
 
@@ -120,11 +126,20 @@ MozcIntegration::MozcIntegration(SkkContext *libskk_context,
     : impl_(std::make_unique<Impl>()) {
     impl_->libskk_ctx = libskk_context;
     impl_->opts = options;
+    log::setEnabled(options.debug);
+    SKK_MOZC_LOG(
+        "MozcIntegration init: mozc_enabled=%d timeout=%dms maxCand=%d "
+        "server=%s",
+        options.mozc_enabled, options.ipc_timeout_ms,
+        options.max_mozc_candidates,
+        options.mozc_server_path.empty() ? "(default)"
+                                         : options.mozc_server_path.c_str());
     if (options.mozc_enabled) {
         MozcClientOptions co;
         co.timeout = std::chrono::milliseconds(options.ipc_timeout_ms);
         co.max_candidates = options.max_mozc_candidates;
         co.debug = options.debug;
+        co.mozc_server_path = options.mozc_server_path;
         impl_->client = std::make_shared<MozcClient>(co);
     }
 }
@@ -237,10 +252,16 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
     }
     std::string yomi = libskkCurrentYomi(impl_->libskk_ctx);
     if (utf8Chars(yomi) < kMinYomiCharsForMozc) {
+        SKK_MOZC_LOG("augment: skip — yomi too short (%zu bytes)", yomi.size());
         return;
     }
 
+    SKK_MOZC_LOG("augment: yomi=\"%s\"", yomi.c_str());
     auto mozc_out = impl_->client->convert(yomi);
+    SKK_MOZC_LOG("augment: mozc=%s top=%zu segs=%zu",
+                 mozc_out ? "ok" : "miss",
+                 mozc_out ? mozc_out->top_candidates.size() : 0,
+                 mozc_out ? mozc_out->segments.size() : 0);
 
     // Build SKK candidate snapshot. libskk doesn't tag entries by source dict,
     // so we approximate "from personal dict" via index < N where N is the
