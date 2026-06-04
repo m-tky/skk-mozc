@@ -258,24 +258,13 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
 
 void MozcIntegration::recordCommit(const std::string &yomi,
                                    const std::string &surface) {
-    if (yomi.empty() || surface.empty()) return;
-    // Push into libskk's user dict via the live context. libskk persists this
-    // to ~/.skk-jisyo on save (or on shutdown).
-    SkkCandidate *cand =
-        skk_candidate_new(surface.c_str(), nullptr, surface.c_str());
-    if (!cand) return;
-    // skk_context_save_dictionaries() flushes; we let libskk decide cadence.
-    // Append via the SkkUserDict the engine constructed at startup. libskk's
-    // public C API doesn't expose append directly without a user-dict handle;
-    // we let SkkState::save() handle persistence and only mark the entry as
-    // "selected" via libskk's normal commit path. So this method is the
-    // hook the integration calls when we bypass libskk's own commit (i.e.,
-    // from the merger/refiner). When the merge candidate is committed,
-    // libskk hasn't seen it; the practical fallback is to re-feed the yomi
-    // to libskk so its user-dict learning fires, then immediately suppress
-    // the regenerated preedit. v0 leaves this as a known gap; see
-    // CLAUDE.md "オープン論点".
-    g_object_unref(cand);
+    // v0 stub. When a merged (mozc-side) candidate is committed, libskk's own
+    // commit path is bypassed, so its user-dict learning does not fire. The
+    // practical fix is to re-feed yomi+surface back to libskk so the user dict
+    // picks it up; we defer that to M3 alongside the bunsetsu refinement
+    // commit path. See CLAUDE.md "オープン論点".
+    (void)yomi;
+    (void)surface;
 }
 
 } // namespace skk_mozc
