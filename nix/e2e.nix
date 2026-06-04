@@ -37,25 +37,6 @@ stdenv.mkDerivation {
   postPatch = ''
     cp -r ${skkMozcSources}/panel_dispatch  panel_dispatch
     cp -r ${skkMozcSources}/skk_integration skk_integration
-
-    # Stage skk.so + its conf files into the runtime layout the e2e binary
-    # expects (matched by SKK_MOZC_ADDON_DIR / SKK_MOZC_DATA_DIR).
-    runtime=$PWD/e2e-runtime
-    mkdir -p $runtime/addons \
-             $runtime/data/addon \
-             $runtime/data/inputmethod \
-             $runtime/data/skk
-    cp ${fcitx5-skk-mozc}/lib/fcitx5/skk.so $runtime/addons/
-    cp ${fcitx5-skk-mozc}/share/fcitx5/addon/skk.conf $runtime/data/addon/
-    cp ${fcitx5-skk-mozc}/share/fcitx5/inputmethod/skk.conf $runtime/data/inputmethod/
-    cp ${fcitx5-skk-mozc}/share/fcitx5/skk/dictionary_list $runtime/data/skk/
-
-    # Also include the system fcitx5 testfrontend + testui in the addon
-    # search path so loading them succeeds inside the test.
-    cp ${fcitx5}/lib/fcitx5/libtestfrontend.so $runtime/addons/ || true
-    cp ${fcitx5}/lib/fcitx5/libtestui.so       $runtime/addons/ || true
-    cp ${fcitx5}/share/fcitx5/testing/addon/testfrontend.conf \
-       $runtime/data/addon/ 2>/dev/null || true
   '';
 
   cmakeFlags = [
@@ -69,10 +50,26 @@ stdenv.mkDerivation {
   doCheck = false;
 
   postInstall = ''
-    # Copy the staged runtime tree into the output so the installed binary
-    # can resolve TESTING_BINARY_DIR.
-    mkdir -p $out/share/skk-mozc/e2e
-    cp -r ./e2e-runtime/. $out/share/skk-mozc/e2e/
+    # Stage skk.so + fcitx5 conf files at the runtime layout the e2e binary
+    # expects (matched at compile time by SKK_MOZC_ADDON_DIR / SKK_MOZC_DATA_DIR).
+    runtime=$out/share/skk-mozc/e2e
+    mkdir -p $runtime/addons \
+             $runtime/data/addon \
+             $runtime/data/inputmethod \
+             $runtime/data/skk
+    cp ${fcitx5-skk-mozc}/lib/fcitx5/skk.so $runtime/addons/
+    cp ${fcitx5-skk-mozc}/share/fcitx5/addon/skk.conf $runtime/data/addon/
+    cp ${fcitx5-skk-mozc}/share/fcitx5/inputmethod/skk.conf $runtime/data/inputmethod/
+    cp ${fcitx5-skk-mozc}/share/fcitx5/skk/dictionary_list $runtime/data/skk/
+
+    # Mirror testfrontend / testui addons into our search path so the
+    # Instance can load them (they live in nixpkgs.fcitx5).
+    cp ${fcitx5}/lib/fcitx5/libtestfrontend.so $runtime/addons/ || true
+    cp ${fcitx5}/lib/fcitx5/libtestui.so       $runtime/addons/ || true
+    if [ -d ${fcitx5}/share/fcitx5/testing/addon ]; then
+      cp ${fcitx5}/share/fcitx5/testing/addon/*.conf \
+         $runtime/data/addon/ 2>/dev/null || true
+    fi
   '';
 
   meta = with lib; {
