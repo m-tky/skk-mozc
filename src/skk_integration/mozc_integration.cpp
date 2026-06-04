@@ -274,29 +274,46 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
     MozcIntegration::SkkConfigSnapshot cfg;
     if (impl->config_accessor) cfg = impl->config_accessor();
-    // Cap pageSize at the actual candidate count: empty trailing slots
-    // (size() returning n while pageSize asks for 9) were a likely
-    // trigger of fcitx5's CommonCandidateList::label() bounds assertion
-    // when the cursor reached the last item.
-    int desired = cfg.page_size > 0 ? cfg.page_size : 9;
-    int capped = std::min<int>(desired, static_cast<int>(merged.size()));
-    if (capped <= 0) capped = 1;
-    fcitx_list->setPageSize(capped);
+    // ROOT-CAUSE FIX for the 'CommonCandidateList: invalid index' fcitx5
+    // crash when navigating to (or past) the last candidate:
+    //
+    // CommonCandidateList paginates internally — it stores ALL candidates
+    // and exposes them through `size()` / `label()` / `candidate()` based
+    // on a `currentPage_` cursor. fcitx5 5.1.19's renderer trusts that
+    // (cursor page == currentPage_), querying cursorIndex() which returns
+    // -1 when those disagree. The renderer then calls label(-1) and the
+    // bounds-check assertion escapes through the IO callback, aborting
+    // fcitx5.
+    //
+    // fcitx5-skk's own SkkFcitxCandidateList avoids this entirely by only
+    // ever placing ONE page worth of candidates into its list, and
+    // rebuilding the list on page change. We achieve the same property
+    // here without a custom list class: pageSize = total candidate count.
+    // Now there is only ever a single page, currentPage_ stays 0, cursor
+    // is always page-relative, and cursorIndex() can never return -1.
+    // The cost is that all candidates render at once (no PageUp/Down
+    // splitting), which matches how most modern IMEs behave with vertical
+    // panels anyway.
+    int n = static_cast<int>(merged.size());
+    if (n < 1) n = 1;
+    fcitx_list->setPageSize(n);
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
-    // Trim selection-key list to the same size so labels_ never exceeds
-    // pageSize either.
+    // Selection keys: pad/trim so labels_ has EXACTLY n entries (matching
+    // pageSize). If we leave it shorter, label(i) for i in [sel.size(), n)
+    // would throw 'invalid label idx' — the same assertion family we're
+    // protecting against. Padding with a default Key produces an empty
+    // label string for slots past the shortcut range, which renders as a
+    // candidate with no digit prefix — fine for the user.
     auto sel = selectionKeysFor(cfg.choose_key);
-    if (static_cast<int>(sel.size()) > capped) {
-        sel.resize(capped);
-    }
+    sel.resize(n); // grow with default Keys (sym=None → empty label)
     fcitx_list->setSelectionKey(sel);
-    // Pin the cursor model so wrap-around at list boundaries is predictable
-    // and never produces -1 (which crashed fcitx5's renderer in some cases).
-    // KeepInSamePage(true) is critical: when the cursor was allowed to
-    // cross a page boundary during navigation, fcitx5 5.1.19 fired
-    // 'CommonCandidateList: invalid index' on the next render and aborted.
     fcitx_list->setCursorIncludeUnselected(false);
     fcitx_list->setCursorKeepInSamePage(true);
+    // We deliberately don't honour cfg.page_size: respecting the user's
+    // PageSize would re-introduce pagination, and with it the
+    // currentPage_ / cursor-page divergence bug above. PageSize remains
+    // a per-skk-conf setting only for libskk's own ▼ candidate panel.
+    (void)cfg.page_size;
 
     // Pre-compute the concatenated segment surface so the callback can
     // decide whether to break the commit into per-segment learn pairs.
