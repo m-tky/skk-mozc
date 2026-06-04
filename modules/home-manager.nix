@@ -94,7 +94,7 @@ in
     xdg.configFile."fcitx5/conf/skk-mozc-dictionaries".text =
       let
         defaults = [
-          "${pkgs.skk-dicts}/share/skk/SKK-JISYO.L"
+          "${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L"
         ];
         all = defaults ++ cfg.extraSkkDictionaries;
       in
