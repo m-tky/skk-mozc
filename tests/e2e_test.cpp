@@ -26,6 +26,8 @@
 #include <fcitx/addonmanager.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputcontextmanager.h>
+#include <fcitx/inputmethodmanager.h>
+#include <fcitx/inputmethodgroup.h>
 #include <fcitx/instance.h>
 #include <fcitx-module/testfrontend/testfrontend_public.h>
 
@@ -88,6 +90,15 @@ int main(int argc, char **argv) {
                      "[FAIL] could not load testfrontend addon\n");
         return 2;
     }
+
+    // Install skk into the default input method group so
+    // setCurrentInputMethod("skk") has something to point at.
+    auto group = instance.inputMethodManager().currentGroup();
+    group.inputMethodList().clear();
+    group.inputMethodList().push_back(InputMethodGroupItem("keyboard-us"));
+    group.inputMethodList().push_back(InputMethodGroupItem("skk"));
+    group.setDefaultInputMethod("skk");
+    instance.inputMethodManager().setGroup(std::move(group));
 
     int failures = 0;
 
