@@ -14,7 +14,7 @@
  * '[FAIL] ...' to stdout.
  */
 
-#include "../src/panel_dispatch/panel_dispatch.h"
+#include "panel_dispatch/panel_dispatch.h"
 
 #include <cstdio>
 #include <cstdlib>
