@@ -70,6 +70,14 @@ stdenv.mkDerivation {
       cp ${fcitx5}/share/fcitx5/testing/addon/*.conf \
          $runtime/data/addon/ 2>/dev/null || true
     fi
+    # nixpkgs ships the testing addon .conf files with the @PROJECT_VERSION@
+    # placeholder unresolved, which fcitx5's addon loader rejects. Substitute
+    # the actual fcitx5 version so the dependency check passes.
+    fcitx5_ver=${fcitx5.version}
+    for f in $runtime/data/addon/test*.conf; do
+      [ -f "$f" ] || continue
+      sed -i "s/@PROJECT_VERSION@/$fcitx5_ver/g" "$f"
+    done
   '';
 
   meta = with lib; {
