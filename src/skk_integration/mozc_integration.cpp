@@ -111,6 +111,7 @@ struct MozcIntegration::Impl {
     SkkDict *user_dict = nullptr;
     MozcIntegration::DictAccessor dict_accessor;
     MozcIntegration::FullReset full_reset;
+    MozcIntegration::ConfigAccessor config_accessor;
     IntegrationOptions opts;
     std::shared_ptr<MozcClient> client;
     std::unique_ptr<Refiner> refiner;
@@ -164,6 +165,10 @@ void MozcIntegration::setFullReset(FullReset cb) {
     impl_->full_reset = std::move(cb);
 }
 
+void MozcIntegration::setConfigAccessor(ConfigAccessor accessor) {
+    impl_->config_accessor = std::move(accessor);
+}
+
 namespace {
 
 // Forward decls (definitions follow).
@@ -203,20 +208,51 @@ void mirrorFocusedCandidateToPreedit(fcitx::InputContext *ic) {
     ic->updatePreedit();
 }
 
+// Selection key layouts mirror fcitx5-skk's three modes so the user's
+// CandidateChooseKey config from skk.conf transparently applies to our
+// merged panel.
+fcitx::KeyList selectionKeysFor(
+    MozcIntegration::CandidateChooseKeyStyle style) {
+    using S = MozcIntegration::CandidateChooseKeyStyle;
+    switch (style) {
+    case S::ABC:
+        return {
+            fcitx::Key(FcitxKey_a), fcitx::Key(FcitxKey_b),
+            fcitx::Key(FcitxKey_c), fcitx::Key(FcitxKey_d),
+            fcitx::Key(FcitxKey_e), fcitx::Key(FcitxKey_f),
+            fcitx::Key(FcitxKey_g), fcitx::Key(FcitxKey_h),
+            fcitx::Key(FcitxKey_i), fcitx::Key(FcitxKey_j),
+        };
+    case S::Qwerty:
+        return {
+            fcitx::Key(FcitxKey_a), fcitx::Key(FcitxKey_s),
+            fcitx::Key(FcitxKey_d), fcitx::Key(FcitxKey_f),
+            fcitx::Key(FcitxKey_g), fcitx::Key(FcitxKey_h),
+            fcitx::Key(FcitxKey_j), fcitx::Key(FcitxKey_k),
+            fcitx::Key(FcitxKey_l), fcitx::Key(FcitxKey_semicolon),
+        };
+    case S::Digit:
+    default:
+        return {
+            fcitx::Key(FcitxKey_1), fcitx::Key(FcitxKey_2),
+            fcitx::Key(FcitxKey_3), fcitx::Key(FcitxKey_4),
+            fcitx::Key(FcitxKey_5), fcitx::Key(FcitxKey_6),
+            fcitx::Key(FcitxKey_7), fcitx::Key(FcitxKey_8),
+            fcitx::Key(FcitxKey_9),
+        };
+    }
+}
+
 void installMergedPanel(MozcIntegration::Impl *impl,
                         fcitx::InputContext *ic,
                         std::string yomi,
                         std::vector<MergedCandidate> merged) {
     auto fcitx_list = std::make_unique<fcitx::CommonCandidateList>();
-    fcitx_list->setPageSize(9); // matches the digit-selection key mapping
+    MozcIntegration::SkkConfigSnapshot cfg;
+    if (impl->config_accessor) cfg = impl->config_accessor();
+    fcitx_list->setPageSize(cfg.page_size);
     fcitx_list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
-    fcitx_list->setSelectionKey(fcitx::KeyList{
-        fcitx::Key(FcitxKey_1), fcitx::Key(FcitxKey_2),
-        fcitx::Key(FcitxKey_3), fcitx::Key(FcitxKey_4),
-        fcitx::Key(FcitxKey_5), fcitx::Key(FcitxKey_6),
-        fcitx::Key(FcitxKey_7), fcitx::Key(FcitxKey_8),
-        fcitx::Key(FcitxKey_9),
-    });
+    fcitx_list->setSelectionKey(selectionKeysFor(cfg.choose_key));
 
     for (const auto &c : merged) {
         std::string text = c.value;
@@ -380,7 +416,9 @@ bool MozcIntegration::handleRefinerKey_(fcitx::KeyEvent &keyEvent,
 namespace {
 // Forward decl; the definition lives further down alongside the panel-key
 // translation helpers.
-skk_mozc::dispatch::PanelKey classifyPanelKey(const fcitx::Key &k);
+skk_mozc::dispatch::PanelKey classifyPanelKey(
+    const fcitx::Key &k,
+    MozcIntegration::CandidateChooseKeyStyle choose_style);
 } // namespace
 
 bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
@@ -395,7 +433,10 @@ bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
         /*panel_active=*/impl_->panel_active,
         /*refiner_armed=*/impl_->refiner && !impl_->refiner->done(),
     };
-    auto target = dp::decideRoute(st, classifyPanelKey(keyEvent.key()));
+    MozcIntegration::SkkConfigSnapshot cfg;
+    if (impl_->config_accessor) cfg = impl_->config_accessor();
+    auto target = dp::decideRoute(st,
+        classifyPanelKey(keyEvent.key(), cfg.choose_key));
     switch (target) {
     case dp::RouteTarget::RefinerDispatch:
         return handleRefinerKey_(keyEvent, ic);
@@ -528,9 +569,25 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
 namespace {
 
 // Map a fcitx5 KeyEvent to the dispatcher's neutral PanelKey enum so the
-// decision tree can be unit-tested without fcitx5 in the build.
-skk_mozc::dispatch::PanelKey classifyPanelKey(const fcitx::Key &k) {
+// decision tree can be unit-tested without fcitx5 in the build. The
+// choose_style argument decides which key set picks candidate 1-9 directly
+// (Digit/ABC/Qwerty) so the SKK config from ~/.config/fcitx5/conf/skk.conf
+// propagates here without our panel reverting to digits 1-9.
+skk_mozc::dispatch::PanelKey classifyPanelKey(
+    const fcitx::Key &k,
+    MozcIntegration::CandidateChooseKeyStyle choose_style) {
     using PK = skk_mozc::dispatch::PanelKey;
+    // Configured selection keys first — these "look like" letters but should
+    // act as digit selectors when the user picked ABC or Qwerty mode.
+    {
+        auto sel = selectionKeysFor(choose_style);
+        for (size_t i = 0; i < sel.size() && i < 9; ++i) {
+            if (k.check(sel[i].sym())) {
+                return static_cast<PK>(
+                    static_cast<int>(PK::Digit1) + static_cast<int>(i));
+            }
+        }
+    }
     if (k.check(FcitxKey_Escape))                      return PK::Escape;
     if (k.check(FcitxKey_g, fcitx::KeyState::Ctrl))    return PK::CtrlG;
     if (k.check(FcitxKey_Return))                      return PK::Enter;
@@ -579,7 +636,9 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         return false;
     }
     const auto &key = keyEvent.key();
-    auto pk = classifyPanelKey(key);
+    MozcIntegration::SkkConfigSnapshot pk_cfg;
+    if (impl_->config_accessor) pk_cfg = impl_->config_accessor();
+    auto pk = classifyPanelKey(key, pk_cfg.choose_key);
     auto decision = skk_mozc::dispatch::decidePanelAction(
         pk, list->globalCursorIndex(), list->totalSize(),
         list->hasPrev(), list->hasNext());

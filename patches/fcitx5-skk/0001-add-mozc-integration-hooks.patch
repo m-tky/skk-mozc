@@ -68,7 +68,7 @@ index 5a84eaa..2976a0b 100644
  set_target_properties(skk PROPERTIES PREFIX "")
  install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
 diff --git a/src/skk.cpp b/src/skk.cpp
-index 19b564b..0893082 100644
+index 19b564b..27d5405 100644
 --- a/src/skk.cpp
 +++ b/src/skk.cpp
 @@ -48,6 +48,7 @@
@@ -79,7 +79,7 @@ index 19b564b..0893082 100644
  
  #define SKK_DEBUG() FCITX_LOGC(::fcitx::skk_logcategory, Debug)
  
-@@ -627,6 +628,28 @@ SkkState::SkkState(SkkEngine *engine, InputContext *ic)
+@@ -627,6 +628,51 @@ SkkState::SkkState(SkkEngine *engine, InputContext *ic)
      skk_context_set_auto_start_henkan_keywords(
          context, const_cast<gchar **>(AUTO_START_HENKAN_KEYWORDS),
          G_N_ELEMENTS(AUTO_START_HENKAN_KEYWORDS));
@@ -105,10 +105,33 @@ index 19b564b..0893082 100644
 +    // very next updateUI() pushes the stale ▽yomi back onto the input panel
 +    // and the user sees their just-committed text plus the ghost preedit.
 +    mozc_integration_->setFullReset([this]() { this->reset(); });
++
++    // Honour the user's CandidateChooseKey / PageSize from skk.conf so our
++    // panel feels identical to upstream fcitx5-skk's.
++    mozc_integration_->setConfigAccessor([eng = engine_]() {
++        skk_mozc::MozcIntegration::SkkConfigSnapshot snap;
++        snap.page_size = *eng->config().pageSize;
++        switch (*eng->config().candidateChooseKey) {
++        case CandidateChooseKey::ABC:
++            snap.choose_key = skk_mozc::MozcIntegration::
++                                  CandidateChooseKeyStyle::ABC;
++            break;
++        case CandidateChooseKey::Qwerty:
++            snap.choose_key = skk_mozc::MozcIntegration::
++                                  CandidateChooseKeyStyle::Qwerty;
++            break;
++        case CandidateChooseKey::Digit:
++        default:
++            snap.choose_key = skk_mozc::MozcIntegration::
++                                  CandidateChooseKeyStyle::Digit;
++            break;
++        }
++        return snap;
++    });
  }
  
  SkkState::~SkkState() {
-@@ -634,6 +657,10 @@ SkkState::~SkkState() {
+@@ -634,6 +680,10 @@ SkkState::~SkkState() {
  }
  
  void SkkState::keyEvent(KeyEvent &keyEvent) {
@@ -119,7 +142,7 @@ index 19b564b..0893082 100644
      if (handleCandidate(keyEvent)) {
          return;
      }
-@@ -731,7 +758,15 @@ void SkkState::updateUI() {
+@@ -731,7 +781,15 @@ void SkkState::updateUI() {
      std::unique_ptr<SkkFcitxCandidateList> candidateList;
      if (skk_candidate_list_get_page_visible(skkCandidates)) {
          candidateList = std::make_unique<SkkFcitxCandidateList>(engine_, ic_);
@@ -135,7 +158,7 @@ index 19b564b..0893082 100644
  
      if (auto str = UniqueCPtr<char, g_free>{skk_context_poll_output(context)}) {
          if (str && str.get()[0]) {
-@@ -761,17 +796,24 @@ void SkkState::updateUI() {
+@@ -761,17 +819,24 @@ void SkkState::updateUI() {
          return;
      }
  

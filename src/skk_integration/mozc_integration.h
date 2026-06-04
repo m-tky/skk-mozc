@@ -80,6 +80,17 @@ public:
     using FullReset = std::function<void()>;
     void setFullReset(FullReset cb);
 
+    // SKK configuration the integration should mirror onto its own panel
+    // so that page size / selection-key behaviour stays consistent with
+    // upstream fcitx5-skk's UI.
+    enum class CandidateChooseKeyStyle { Digit, ABC, Qwerty };
+    struct SkkConfigSnapshot {
+        int page_size = 9;
+        CandidateChooseKeyStyle choose_key = CandidateChooseKeyStyle::Digit;
+    };
+    using ConfigAccessor = std::function<SkkConfigSnapshot()>;
+    void setConfigAccessor(ConfigAccessor accessor);
+
     // Called from the *top* of SkkState::keyEvent. Returns true if the
     // refinement sub-mode consumed the key (in which case the caller skips
     // libskk dispatch and the rest of its keyEvent).
