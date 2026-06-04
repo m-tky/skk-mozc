@@ -7,23 +7,49 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Protobuf REQUIRED)
 
-# Source layout:
-#   ./mozc_client/      C++ implementation (from this repo)
-#   ./proto/            commands.proto, config.proto (copied from mozc-src)
-# The Nix derivation arranges those before invoking cmake.
+# Layout staged by the derivation:
+#   ./mozc_client/         C++ implementation
+#   ./proto/protocol/*.proto   from mozc-src
+#
+# protoc gets -I ./proto so that "import \"protocol/foo.proto\";" inside
+# mozc's protos resolves cleanly. Generated headers land at
+#   <build>/protocol/commands.pb.h
+# and our C++ does  #include "protocol/commands.pb.h".
 
 set(PROTO_DIR "${CMAKE_SOURCE_DIR}/proto")
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/proto")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/protocol")
 
-protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
-    "${PROTO_DIR}/commands.proto"
-    "${PROTO_DIR}/config.proto")
+set(PROTO_FILES
+    protocol/commands.proto
+    protocol/candidate_window.proto
+    protocol/config.proto
+    protocol/engine_builder.proto
+    protocol/user_dictionary_storage.proto
+    protocol/renderer_command.proto
+    protocol/renderer_style.proto
+)
+
+set(PROTO_GENERATED)
+foreach(P ${PROTO_FILES})
+    get_filename_component(BASE ${P} NAME_WE)
+    set(OUT_CC "${CMAKE_BINARY_DIR}/protocol/${BASE}.pb.cc")
+    set(OUT_H  "${CMAKE_BINARY_DIR}/protocol/${BASE}.pb.h")
+    add_custom_command(
+        OUTPUT  ${OUT_CC} ${OUT_H}
+        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+                --cpp_out=${CMAKE_BINARY_DIR}
+                -I${PROTO_DIR}
+                ${PROTO_DIR}/${P}
+        DEPENDS ${PROTO_DIR}/${P}
+        COMMENT "protoc ${P}")
+    list(APPEND PROTO_GENERATED ${OUT_CC})
+endforeach()
 
 add_executable(mozc-client-cli
     mozc_client/cli_main.cpp
     mozc_client/mozc_client.cpp
     mozc_client/ipc_socket.cpp
-    ${PROTO_SRCS}
+    ${PROTO_GENERATED}
 )
 target_include_directories(mozc-client-cli PRIVATE
     "${CMAKE_SOURCE_DIR}"

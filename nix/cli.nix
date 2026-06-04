@@ -27,9 +27,8 @@ stdenv.mkDerivation {
   # the vendored proto files alongside.
   postPatch = ''
     cp mozc_client/CMakeLists-cli.txt CMakeLists.txt
-    mkdir -p proto
-    cp ${mozc-src}/src/protocol/commands.proto proto/commands.proto
-    cp ${mozc-src}/src/protocol/config.proto   proto/config.proto
+    mkdir -p proto/protocol
+    cp ${mozc-src}/src/protocol/*.proto proto/protocol/
   '';
 
   meta = with lib; {
