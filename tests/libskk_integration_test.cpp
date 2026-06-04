@@ -52,8 +52,8 @@ int g_fail = 0;
     std::string _e = (expected);                                           \
     if (_a == _e) { ++g_pass; std::printf("[PASS] %s\n", name); }          \
     else { ++g_fail;                                                       \
-           std::printf("[FAIL] %s: got %q expected %q\n", name,            \
-                       _a.c_str(), _e.c_str()); }                          \
+           std::printf("[FAIL] %s: got \"%s\" expected \"%s\"\n",          \
+                       name, _a.c_str(), _e.c_str()); }                    \
 } while (0)
 
 // Feeds a sequence of key events into the context. Returns true if every
@@ -81,7 +81,8 @@ int main() {
     {
         SkkContext *ctx = makeContext();
         // "A s a h i s h i n b u n" → ▽あさひしんぶん
-        feed(ctx, "A s a h i s h i n b u n");
+        // 'nn' at the end so libskk commits the pending 'n' to ん.
+        feed(ctx, "A s a h i s h i n b u n n");
         std::string preedit =
             skk_context_get_preedit(ctx) ? skk_context_get_preedit(ctx) : "";
         std::printf("  scenario1 preedit=\"%s\"\n", preedit.c_str());
@@ -93,7 +94,8 @@ int main() {
     // === Scenario 2: ▼ mode (after SPC) gives empty yomi ===
     {
         SkkContext *ctx = makeContext();
-        feed(ctx, "A s a h i s h i n b u n");
+        // 'nn' at the end so libskk commits the pending 'n' to ん.
+        feed(ctx, "A s a h i s h i n b u n n");
         feed(ctx, "space"); // libskk attempts conversion
         std::string preedit =
             skk_context_get_preedit(ctx) ? skk_context_get_preedit(ctx) : "";
@@ -109,7 +111,8 @@ int main() {
     // === Scenario 3: skk_context_reset clears everything ===
     {
         SkkContext *ctx = makeContext();
-        feed(ctx, "A s a h i s h i n b u n");
+        // 'nn' at the end so libskk commits the pending 'n' to ん.
+        feed(ctx, "A s a h i s h i n b u n n");
         skk_context_reset(ctx);
         std::string preedit_after_reset =
             skk_context_get_preedit(ctx) ? skk_context_get_preedit(ctx) : "";
@@ -145,7 +148,8 @@ int main() {
     {
         SkkContext *ctx = makeContext();
         // First conversion: ▽あさひしんぶん
-        feed(ctx, "A s a h i s h i n b u n");
+        // 'nn' at the end so libskk commits the pending 'n' to ん.
+        feed(ctx, "A s a h i s h i n b u n n");
         CHECK_EQ(skk_mozc::libskkCurrentYomi(ctx), "あさひしんぶん",
                  "carry-over: first yomi loaded");
         // Simulate ESC handler: hard reset.
