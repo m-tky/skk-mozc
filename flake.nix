@@ -58,6 +58,19 @@
           # `nix flake check` runs the test binary too.
           checks = {
             inherit skk-mozc-tests;
+            # Guard against scripts/versions.env drifting from flake.lock.
+            # The non-Nix build path (scripts/build.sh) reads versions.env,
+            # so this is the only thing that keeps those two truth sources
+            # honest. If the check fails, run scripts/sync-versions.sh.
+            versions-env-in-sync = pkgs.runCommand "versions-env-in-sync"
+              { nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.diffutils ]; }
+              ''
+                cp -r ${./.} src
+                chmod -R u+w src
+                cd src
+                ./scripts/sync-versions.sh --check
+                touch $out
+              '';
           };
 
           devShells.default = pkgs.mkShell {
