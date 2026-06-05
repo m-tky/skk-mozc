@@ -138,6 +138,31 @@ int main(int argc, char **argv) {
                       "g", "a", "t", "a", "b", "e", "t", "a",
                       "i", "n", "a", "a", "space", "Return"});
 
+            // === Scenario 2': "Okane<space>Kasegu<Enter>" multi-word ===
+            //
+            // User-reported regression: typing this whole sequence used to
+            // commit "せぐか", which happens when the mozc panel SoftAborts
+            // the capital K instead of CommitAndForward'ing — libskk then
+            // tries to interpret K as okurigana for ▽おかね, fails the
+            // dict lookup, enters register mode, and Return commits the
+            // register buffer (せぐ) + okurigana (か).
+            //
+            // Correct behaviour with CommitAndForward (current code):
+            //   ▽おかね + SPACE → mozc panel
+            //   K     → CommitAndForward: commit "お金", reset libskk,
+            //           libskk receives K and starts a fresh ▽K.
+            //   asegu → ▽かせぐ (lowercase g is plain romaji)
+            //   Enter → libskk commits "かせぐ" as kana (no conversion).
+            //
+            // Two commits in order: "お金" then "かせぐ".
+            sendKeys(testfrontend, uuid, {"Escape"});
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("お金");
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("かせぐ");
+            sendKeys(testfrontend, uuid,
+                     {"O", "k", "a", "n", "e", "space",
+                      "K", "a", "s", "e", "g", "u", "Return"});
+            sendKeys(testfrontend, uuid, {"Escape"});
+
             // === Scenario 3: ESC abandons in-progress conversion ===
             // After ESC there must be no leftover ▽yomi. Re-typing a new
             // word and committing it should produce ONLY the new word,
