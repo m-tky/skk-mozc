@@ -138,6 +138,20 @@ int main(int argc, char **argv) {
                       "g", "a", "t", "a", "b", "e", "t", "a",
                       "i", "n", "a", "a", "space", "Return"});
 
+            // === Scenario 2'': EXACT user input "oKane<space>Kasegu" ===
+            // Lowercase 'o' commits 'お' as plain hiragana (NOT a ▽).
+            // Capital K starts ▽, ane fills ▽かね (only 2 chars).
+            // Then SPACE opens mozc panel for "かね" — and capital K to
+            // start "Kasegu" must CommitAndForward, not SoftAbort.
+            sendKeys(testfrontend, uuid, {"Escape"});
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("お");
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("金");
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("かせぐ");
+            sendKeys(testfrontend, uuid,
+                     {"o", "K", "a", "n", "e", "space",
+                      "K", "a", "s", "e", "g", "u", "Return"});
+            sendKeys(testfrontend, uuid, {"Escape"});
+
             // === Scenario 2': "Okane<space>Kasegu<Enter>" multi-word ===
             //
             // User-reported regression: typing this whole sequence used to
