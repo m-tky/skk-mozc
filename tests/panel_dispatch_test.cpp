@@ -144,6 +144,18 @@ int main() {
          dp::PanelKey::Other, 0, 9, false, false,
          dp::PanelAction::SoftAbort, -1},
 
+        // --- Bare modifier presses (Shift_L, Ctrl_L, etc.) must NOT
+        //     close the panel. User-reported regression: holding Shift
+        //     to type capital K after SPC → the Shift_L event closed
+        //     the mozc panel via SoftAbort, then K reached libskk's
+        //     ▽かね and triggered okurigana register mode "せぐか".
+        {"ModifierOnly press with focused cand → Ignore",
+         dp::PanelKey::ModifierOnly, 0, 9, false, false,
+         dp::PanelAction::Ignore, -1},
+        {"ModifierOnly press with no cursor → Ignore",
+         dp::PanelKey::ModifierOnly, -1, 0, false, false,
+         dp::PanelAction::Ignore, -1},
+
         // --- Backspace returns to ▽ for re-editing the yomi.
         {"Backspace → SoftAbort (re-edit yomi)",
          dp::PanelKey::Backspace, 0, 9, false, false,

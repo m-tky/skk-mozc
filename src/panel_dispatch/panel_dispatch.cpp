@@ -60,6 +60,14 @@ PanelDecision decidePanelAction(PanelKey k,
                                    : PanelAction::Ignore;
         return out;
 
+    case PanelKey::ModifierOnly:
+        // Bare Shift/Ctrl/Alt/etc. The user is forming a chord. Stay
+        // exactly where we are; the next key event (the letter) will
+        // arrive with the modifier in `states()` and be classified
+        // properly.
+        out.action = PanelAction::Ignore;
+        return out;
+
     case PanelKey::Backspace:
         // Re-edit the yomi: close the panel, libskk's ▽ stays intact, the
         // Backspace itself goes to libskk so the next press shortens the

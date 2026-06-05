@@ -644,11 +644,21 @@ skk_mozc::dispatch::PanelKey classifyPanelKey(
     if (k.check(FcitxKey_7)) return PK::Digit7;
     if (k.check(FcitxKey_8)) return PK::Digit8;
     if (k.check(FcitxKey_9)) return PK::Digit9;
-    // Any other printable ASCII (letters, punctuation) is treated as text
-    // input. We exclude modifier-only events so e.g. Shift alone doesn't
+    auto sym = static_cast<uint32_t>(k.sym());
+    // Bare modifier press (Shift_L, Shift_R, Control_L/R, Caps_Lock,
+    // Meta_L/R, Alt_L/R, Super_L/R, Hyper_L/R — keysym 0xffe1..0xffee).
+    // These arrive a few ms before the actual chord key (Shift+K etc.)
+    // and we MUST surface them as a distinct PanelKey so dispatch can
+    // Ignore them rather than SoftAbort the panel. Treating Shift_L as
+    // PK::Other made the user-reported register-mode regression
+    // ("▽かね*か【せぐ】") possible.
+    if (sym >= 0xffe1 && sym <= 0xffee) {
+        return PK::ModifierOnly;
+    }
+    // Printable ASCII (letters, punctuation) is treated as text input.
+    // We exclude modifier-state-bearing events so e.g. Ctrl+P doesn't
     // accidentally commit. SKK feeds these to libskk for romaji→kana
     // conversion or henkan-start triggers.
-    auto sym = static_cast<uint32_t>(k.sym());
     bool modifier_only = k.states().test(fcitx::KeyState::Ctrl) ||
                          k.states().test(fcitx::KeyState::Alt) ||
                          k.states().test(fcitx::KeyState::Super);

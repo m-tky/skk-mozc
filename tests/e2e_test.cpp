@@ -138,6 +138,17 @@ int main(int argc, char **argv) {
                       "g", "a", "t", "a", "b", "e", "t", "a",
                       "i", "n", "a", "a", "space", "Return"});
 
+            // Note on bare-modifier handling: real Wayland/X11 fires a
+            // standalone Shift_L (keysym 0xffe1) press immediately before
+            // a Shift+letter chord. classifyPanelKey now maps that bare
+            // modifier to PanelKey::ModifierOnly → PanelAction::Ignore so
+            // the mozc panel stays open until the real letter arrives.
+            // The fix is exercised by panel_dispatch_test's
+            // "ModifierOnly … → Ignore" cases — we can't reproduce it via
+            // TestFrontend here because fcitx5's default IM switch key in
+            // the test environment is bare Shift, which swallows the
+            // event before skk sees it.
+
             // === Scenario 2'': EXACT user input "oKane<space>Kasegu" ===
             // Lowercase 'o' commits 'お' as plain hiragana (NOT a ▽).
             // Capital K starts ▽, ane fills ▽かね (only 2 chars).

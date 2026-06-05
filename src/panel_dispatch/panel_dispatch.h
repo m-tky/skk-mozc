@@ -21,7 +21,17 @@
 namespace skk_mozc::dispatch {
 
 enum class PanelKey {
-    Other = 0,    // function keys, modifiers — close panel quietly
+    Other = 0,    // function keys, weird input we don't recognise — close
+                  // the panel quietly so the key still reaches libskk.
+    ModifierOnly, // bare Shift / Ctrl / Alt / Super / Meta / Hyper press.
+                  // The user is about to type a chord (e.g. Shift+K) —
+                  // we MUST NOT close the panel on the leading modifier
+                  // tap, otherwise libskk receives the subsequent letter
+                  // in ▽ mode and interprets it as an okurigana trigger.
+                  // This is the user-reported "▽かね*か【せぐ】" bug:
+                  // Shift_L hit decidePanelAction's default branch → was
+                  // SoftAbort'd → the K that followed went to libskk's
+                  // okurigana flow instead of CommitAndForward.
     Backspace,    // re-edit the yomi; libskk gets the keystroke
     TextInput,    // printable ASCII (a-z, A-Z, punctuation) — start a new
                   // SKK conversion, so commit the focused candidate first
