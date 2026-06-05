@@ -14,7 +14,7 @@
  *   DELETE_SESSION
  *
  * We never SUBMIT (which would touch mozc's user_history). All learning is
- * persisted by SKK to ~/.skk-jisyo separately.
+ * persisted by SKK to its own user dictionary separately.
  *
  * Note: mozc's CandidateWord doesn't expose an internal cost field. The
  * `index` field gives us mozc's ranking order, which is what the merger needs.

@@ -10,7 +10,7 @@
  *   Tab      move focus to next bunsetsu
  *   Shift+Tab move focus to prev bunsetsu
  *   Space    cycle current bunsetsu to next candidate
- *   Enter    commit full text; tell caller to learn into ~/.skk-jisyo
+ *   Enter    commit full text; tell caller to learn into the SKK user dict
  *   ESC/C-g  abort, return to plain SKK ▽
  *
  * This module is intentionally fcitx5-agnostic. Integration layer translates
@@ -56,7 +56,7 @@ struct RefinerView {
 struct RefinerCommit {
     // The accepted full text, ready to be sent to the application.
     std::string text;
-    // (yomi, surface) pairs to be appended to ~/.skk-jisyo. The integration
+    // (yomi, surface) pairs to be appended to the SKK user dict. The integration
     // layer routes these into libskk's user dict update path.
     std::vector<std::pair<std::string, std::string>> learn_entries;
 };

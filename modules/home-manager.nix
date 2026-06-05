@@ -97,14 +97,13 @@ in
 
     # SKK dictionaries themselves are not managed by this module; users
     # configure them via the standard fcitx5-skk location at
-    # ~/.local/share/fcitx5/skk/dictionary_list. This avoids clobbering setups
-    # that already manage ~/.config/fcitx5 declaratively.
+    # ~/.local/share/fcitx5/skk/dictionary_list. Learning lands in whatever
+    # writable SKK dict libskk owns — by default fcitx5-skk auto-attaches
+    # ~/.local/share/fcitx5/skk/user.dict, which is sufficient for most
+    # users. This module deliberately does NOT seed ~/.skk-jisyo so we
+    # don't fork the user's learning across two files.
 
-    home.activation.skkMozcInitUserDict = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      run mkdir -p $HOME
-      if [ ! -e $HOME/.skk-jisyo ]; then
-        run touch $HOME/.skk-jisyo
-      fi
+    home.activation.skkMozcInitCache = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run mkdir -p $HOME/.cache/skk-mozc
     '';
   });

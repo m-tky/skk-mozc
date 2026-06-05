@@ -14,12 +14,12 @@ SKK's input philosophy is preserved (explicit conversion boundaries, ▽ / ▼ m
   - `くらうどさーびす` → `クラウドサービス` (loanword compound)
   - `にゅーよーくしゅう` → `ニューヨーク州` (loanword + kanji suffix)
   - `わたしはがくせいです` → `私は学生です` (multi-bunsetsu)
-- Your personal SKK dictionary (`~/.skk-jisyo`) always wins. Picking a Mozc-only candidate immediately learns it into `~/.skk-jisyo`, so it surfaces at the top on the second use, behaving like any other SKK entry.
+- Your personal SKK dictionary always wins. Picking a Mozc-only candidate immediately learns it into the SKK user dictionary (libskk's writable dict slot, by default `~/.local/share/fcitx5/skk/user.dict`), so it surfaces at the top on the second use, behaving like any other SKK entry.
 - Mozc-style bunsetsu refinement while a multi-segment candidate is showing:
   - `Shift+←/→` shrink / grow the focused bunsetsu
   - `Tab / Shift+Tab` move focus
   - `Space` cycle the focused bunsetsu's candidates
-  - `Enter` commit (learns each segment to `~/.skk-jisyo`)
+  - `Enter` commit (learns each segment to the SKK user dictionary)
   - `ESC` / `C-g` abort refinement and return to plain SKK ▽
 
 We never call SUBMIT on the Mozc side, so Mozc's own `user_history` stays untouched. All learning lives in your SKK personal dictionary.
@@ -159,7 +159,7 @@ home.file.".local/share/fcitx5/skk/dictionary_list".text = ''
 '';
 ```
 
-The user dictionary at `~/.skk-jisyo` is created automatically by the HM module and is where all learning (SKK or Mozc-sourced) gets persisted.
+All learning (SKK- or Mozc-sourced) goes into libskk's writable user dictionary slot. If you don't configure one explicitly, fcitx5-skk falls back to `~/.local/share/fcitx5/skk/user.dict`, which is where the bulk of your personal entries live. To pin a specific path, add `file=~/your-dict,mode=readwrite,type=file` to the dictionary list above.
 
 ## Development
 

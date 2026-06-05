@@ -60,9 +60,10 @@ public:
     ~MozcIntegration();
 
     // Tell the integration which libskk dictionary to write user learning
-    // into. Pass the first writable SkkDict the engine has (typically
-    // ~/.skk-jisyo). May be called at construction time or any time later;
-    // a null pointer disables learning until set again.
+    // into. Pass the first writable SkkDict the engine has (by default
+    // fcitx5-skk attaches ~/.local/share/fcitx5/skk/user.dict). May be
+    // called at construction time or any time later; a null pointer
+    // disables learning until set again.
     void setUserDict(SkkDict *user_dict);
 
     // Provide an accessor for the engine's full dictionary list. The
