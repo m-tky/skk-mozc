@@ -653,6 +653,10 @@ skk_mozc::dispatch::PanelKey classifyPanelKey(
                          k.states().test(fcitx::KeyState::Alt) ||
                          k.states().test(fcitx::KeyState::Super);
     if (!modifier_only && sym >= 0x20 && sym <= 0x7e) {
+        // SKK uses capital ASCII letters as the okurigana trigger.
+        // Surfacing them as a distinct key lets decidePanelAction skip
+        // the auto-commit path so libskk's ▽ re-opens with okurigana.
+        if (sym >= 'A' && sym <= 'Z') return PK::TextInputCapital;
         return PK::TextInput;
     }
     return PK::Other;

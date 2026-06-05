@@ -162,6 +162,21 @@ int main() {
         {"TextInput with no cursor → SoftAbort",
          dp::PanelKey::TextInput, -1, 0, false, false,
          dp::PanelAction::SoftAbort, -1},
+
+        // --- Capital letter is SKK's okurigana trigger. It must NOT commit
+        //     the focused candidate — instead the panel softly aborts so
+        //     libskk re-opens ▽ with okurigana attached to the original yomi.
+        //     User-reported regression: "Kanga<space>Eru" lost 考 because
+        //     E was being treated as plain TextInput and committed 考 first.
+        {"TextInputCapital with focused cand → SoftAbort",
+         dp::PanelKey::TextInputCapital, 0, 9, false, false,
+         dp::PanelAction::SoftAbort, -1},
+        {"TextInputCapital with cursor 5 → SoftAbort",
+         dp::PanelKey::TextInputCapital, 5, 9, false, false,
+         dp::PanelAction::SoftAbort, -1},
+        {"TextInputCapital with no cursor → SoftAbort",
+         dp::PanelKey::TextInputCapital, -1, 0, false, false,
+         dp::PanelAction::SoftAbort, -1},
     };
 
     for (const auto &c : cases) run(c);

@@ -23,8 +23,14 @@ namespace skk_mozc::dispatch {
 enum class PanelKey {
     Other = 0,    // function keys, modifiers — close panel quietly
     Backspace,    // re-edit the yomi; libskk gets the keystroke
-    TextInput,    // printable ASCII (a-z, A-Z, punctuation) — start a new
+    TextInput,    // printable ASCII *except* capital letters — start a new
                   // SKK conversion, so commit the focused candidate first
+    TextInputCapital, // capital ASCII letter (A-Z). In SKK these are the
+                  // okurigana trigger: pressed in ▼, libskk wants to
+                  // re-enter ▽ with okurigana attached to the *current*
+                  // yomi (so "Kanga<space>Eru" looks up かんがe → 考える).
+                  // We must NOT commit the candidate here; we close the
+                  // mozc panel quietly and let libskk re-open its own ▽.
     Space,
     Escape,
     CtrlG,

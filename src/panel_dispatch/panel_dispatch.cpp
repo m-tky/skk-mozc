@@ -82,6 +82,20 @@ PanelDecision decidePanelAction(PanelKey k,
         }
         return out;
 
+    case PanelKey::TextInputCapital:
+        // SKK okurigana trigger. Closing the panel WITHOUT committing
+        // (and without resetting libskk's ▽) lets libskk re-enter ▽
+        // with okurigana attached to the original yomi. Example:
+        //   "Kanga" + SPACE  →  ▼考  (mozc panel)
+        //   then "Eru"       →  libskk turns this into かんが*える,
+        //                       re-lookup happens with okurigana 'e',
+        //                       result is 考える.
+        // The previous code path treated capitals as plain TextInput,
+        // which committed 考 + started a fresh ▽え — exactly the
+        // "Eで変換が取り消される" symptom.
+        out.action = PanelAction::SoftAbort;
+        return out;
+
     case PanelKey::RefineShrink:
     case PanelKey::RefineGrow:
     case PanelKey::RefineFocusNext:
