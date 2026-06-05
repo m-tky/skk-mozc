@@ -1,240 +1,344 @@
 # fcitx5-skk-mozc
 
-fcitx5-skk に Mozc 辞書由来の連文節変換候補を統合する fcitx5 IME。
-SKK の入力哲学はそのまま、辞書にない複合語 (例:「あさひしんぶん→朝日新聞」) を mozc の連文節変換でカバーする。
+An fcitx5 IME that augments fcitx5-skk with multi-bunsetsu conversion
+candidates sourced from the Mozc dictionary. SKK's input philosophy is
+preserved as-is; compound words missing from the SKK dictionary (e.g.
+「あさひしんぶん→朝日新聞」) get covered by Mozc's multi-bunsetsu
+conversion.
 
-## 設計サマリ
+## Design summary
 
-### 全体方針
+### Overall direction
 
-| 項目 | 決定 |
+| Item | Decision |
 |------|------|
-| 形態 | fcitx5 用 IME (デスクトップ全域) |
-| ベース | fcitx5-skk を patch で拡張、libskk は upstream のまま |
-| Mozc 連携 | `mozc_server` と UNIX socket + protobuf IPC |
-| Mozc コミット | しない (学習は SKK 個人辞書のみ) |
-| ライセンス | GPLv3+ (fcitx5-skk 由来、`SPDX-License-Identifier: GPL-3.0-or-later`) |
+| Form factor | fcitx5 IME (system-wide on the desktop) |
+| Base | Extend fcitx5-skk via patch; libskk stays upstream |
+| Mozc bridge | UNIX socket + protobuf IPC to `mozc_server` |
+| Mozc commit | None — all learning lives in the SKK personal dict |
+| License | GPLv3+ (inherited from fcitx5-skk, `SPDX-License-Identifier: GPL-3.0-or-later`) |
 
-### 候補生成とランキング
+### Candidate generation and ranking
 
-▽ モードで SPC を押したとき:
+When SPC is pressed in ▽ mode:
 
-1. libskk が SKK 辞書から候補を生成。
-2. 並列に Mozc IPC で `SessionCommand::CONVERT` を投げ、候補を取得 (50ms 同期タイムアウト)。
-3. マージ:
-   - SKK 個人辞書 (~/.skk-jisyo) ヒット → 最先頭。
-   - 残りは mozc コストで統合、同じ表記は重複排除。
-   - SKK システム辞書専用エントリ (mozc に無い表記) は mozc 上位より後ろに配置。
-4. 候補ウィンドウは出所マークなしで一覧表示。
+1. libskk produces candidates from the SKK dictionaries.
+2. In parallel, we issue `SessionCommand::CONVERT` over Mozc IPC and
+   collect its candidates (50 ms synchronous timeout).
+3. Merge:
+   - SKK personal dict hits (libskk's writable user-dict slot, which by
+     default is `~/.local/share/fcitx5/skk/user.dict` because fcitx5-skk
+     auto-attaches it) → pinned to the top.
+   - The rest are integrated by Mozc rank, with duplicate surfaces
+     deduplicated.
+   - SKK system-dict-only entries (surfaces Mozc didn't produce) sit
+     below the top Mozc results.
+4. The candidate window displays everything in one list, with no
+   source marker.
 
-Mozc IPC が間に合わない / 失敗した場合は SKK のみで graceful fallback。
+If Mozc IPC times out or fails, we gracefully fall back to SKK-only
+candidates.
 
-### 文節境界調整サブモード
+### Bunsetsu boundary refinement sub-mode
 
-Mozc 候補が候補ウィンドウに入った時点で「refinement モード」に突入する。
-これは fcitx5-skk の通常入力フローを一時的に乗っ取るサブステートで、以下のキーを受け取る:
+The moment a Mozc-sourced candidate lands in the candidate window we
+enter "refinement mode". This is a temporary sub-state that takes over
+fcitx5-skk's normal input flow and consumes the following keys:
 
-| キー | 動作 |
+| Key | Action |
 |------|------|
-| `Shift+←/→` | 先頭文節 (注目文節) の境界を縮める/伸ばす |
-| `Tab / Shift+Tab` | 注目文節を一つ右/左に移動 |
-| `Space` | 注目文節の次候補へ |
-| `Enter` | 全文確定 → SKK 個人辞書に各文節を登録 |
-| `ESC / C-g` | SKK ▽ モードに戻る (refinement 中断) |
+| `Shift+←/→` | Shrink / grow the leading (focused) bunsetsu boundary |
+| `Tab / Shift+Tab` | Move focus to the next / previous bunsetsu |
+| `Space` | Cycle the focused bunsetsu's candidates |
+| `Enter` | Commit the full text → register each segment to the SKK personal dict |
+| `ESC / C-g` | Drop refinement, return to SKK ▽ mode |
 
-mozc とは状態を共有しないので、`SessionCommand::EXPAND_SUGGESTION` 等の引数も自前で持つ。Mozc 側に学習を任せないため `RESET_CONTEXT` を毎回送って状態をクリアする。
+We don't share state with Mozc, so arguments to commands like
+`SessionCommand::EXPAND_SUGGESTION` are tracked locally. Since we
+deliberately keep learning out of Mozc, `RESET_CONTEXT` is sent after
+every query to wipe its state.
 
-### 送り仮名
+### Okurigana
 
-SKK の送り仮名セマンティクス (▽お*Ru) を維持。Mozc には完成形 yomi (「おくる」) を投げて、追加候補源として並走させる。複合語の主な悩みは送り仮名のない名詞で起きるため、これで実用上カバー可能。
+SKK's okurigana semantics (▽お*Ru) are preserved verbatim. Mozc is
+queried in parallel with the *completed* yomi (e.g. "おくる"), acting
+as an extra candidate source. The compound-word pain point is mainly
+okurigana-less nouns, so this is enough in practice.
 
 ### flake.nix
 
 #### inputs
 
-- `nixpkgs` (NixOS unstable 想定)
-- `fcitx5-skk-src` — `github:fcitx/fcitx5-skk`、rev で直 pin
-- `mozc-src` — `github:google/mozc`、rev で直 pin。`src/protocol/commands.proto` の参照元
-- `home-manager` (HM モジュール用)
+- `nixpkgs` (assumes NixOS unstable)
+- `fcitx5-skk-src` — `github:fcitx/fcitx5-skk`, pinned by rev
+- `mozc-src` — `github:google/mozc`, pinned by rev. Source of
+  `src/protocol/commands.proto`
+- `home-manager` (for the HM module)
 - `flake-utils`
 
 #### outputs
 
-| output | 内容 |
+| output | content |
 |--------|------|
-| `packages.<system>.fcitx5-skk-mozc` | ビルド済み fcitx5 アドオン (`.so` + `addon/skk-mozc.conf` + dictionary metadata) |
-| `packages.<system>.default` | 上に同じ |
-| `devShells.<system>.default` | C++ 開発用 (`fcitx5`, `libskk`, `protobuf`, `cmake`, `mozc-src` を参照) |
-| `homeManagerModules.default` | HM 用モジュール |
+| `packages.<system>.fcitx5-skk-mozc` | Built fcitx5 addon (`.so` + `addon/skk-mozc.conf` + dictionary metadata) |
+| `packages.<system>.default` | Same as above |
+| `devShells.<system>.default` | C++ dev shell (`fcitx5`, `libskk`, `protobuf`, `cmake`, `mozc-src` references) |
+| `homeManagerModules.default` | Home Manager module |
 
-#### Home Manager オプション
+#### Home Manager options
 
-すべて `programs.fcitx5-skk-mozc.*` 配下:
+All under `programs.fcitx5-skk-mozc.*`:
 
-| オプション | 型 | デフォルト | 説明 |
+| Option | Type | Default | Description |
 |------------|------|----------|------|
-| `enable` | bool | `false` | アドオンを有効化 |
-| `mozc.enable` | bool | `true` | Mozc 候補マージを有効化 (false なら純粋 SKK) |
-| `mozc.ipcTimeoutMs` | int | `50` | mozc_server 応答待ち上限 (ms) |
-| `mozc.maxCandidates` | int | `20` | 1 クエリで mozc から取り込む候補数上限 |
-| `extraSkkDictionaries` | listOf path | `[]` | システム辞書に追加する SKK 辞書 |
-| `debug` | bool | `false` | `~/.cache/skk-mozc/log` に詳細ログ出力 |
+| `enable` | bool | `false` | Enable the addon |
+| `mozc.enable` | bool | `true` | Enable Mozc candidate merge (`false` = plain SKK) |
+| `mozc.ipcTimeoutMs` | int | `50` | Maximum mozc_server response wait (ms) |
+| `mozc.maxCandidates` | int | `20` | Cap on Mozc candidates accepted per query |
+| `extraSkkDictionaries` | listOf path | `[]` | Extra SKK dictionaries appended to the system list |
+| `debug` | bool | `false` | Emit verbose logs to `~/.cache/skk-mozc/log` |
 
-`enable = true` で:
-- アドオン package が `i18n.inputMethod.fcitx5.addons` に追加される
-- `nixpkgs.mozc` も自動で addons に追加される (mozc_server の binary を提供するため)
-- `nixpkgs.skkDictionaries.l` がデフォルトで dictionary_list に入る
-- `~/.skk-jisyo` が空ファイルとして `home.activation` で初期化される
+When `enable = true`:
+- The addon package is added to `i18n.inputMethod.fcitx5.addons`
+- `nixpkgs.mozc` is auto-added too (it supplies the `mozc_server` binary)
+- `nixpkgs.skkDictionaries.l` lands in the default dictionary_list
+- The module does *not* create a personal dictionary file. fcitx5-skk's
+  default `~/.local/share/fcitx5/skk/user.dict` is used as the write
+  target as-is (only `~/.cache/skk-mozc` is pre-created via
+  `home.activation`).
 
-### リポジトリ構造
+### Repository layout
 
 ```
 .
-├── CLAUDE.md                          設計+実装メモ (このファイル)
-├── README.md                          ユーザ向け
+├── CLAUDE.md                          Design + implementation notes (this file)
+├── README.md                          User-facing
 ├── LICENSE                            GPLv3+
 ├── flake.nix
-├── flake.lock                         自動生成
+├── flake.lock                         Auto-generated
 ├── nix/
-│   └── package.nix                    fcitx5-skk-mozc derivation 本体
+│   └── package.nix                    fcitx5-skk-mozc derivation
 ├── patches/
 │   └── fcitx5-skk/
 │       └── 0001-add-mozc-integration-hooks.patch
-├── src/                               このリポジトリで新規追加するソース
+├── src/                               Sources added by this repo
 │   ├── CMakeLists.txt
-│   ├── mozc_client/                   Mozc IPC クライアント
+│   ├── mozc_client/                   Mozc IPC client
 │   │   ├── mozc_client.h
 │   │   ├── mozc_client.cpp
 │   │   └── ipc_socket.cpp
-│   ├── candidate_merger/              SKK + Mozc マージ
+│   ├── candidate_merger/              SKK + Mozc merge
 │   │   ├── merger.h
 │   │   └── merger.cpp
-│   ├── bunsetsu/                      文節調整サブモード
+│   ├── bunsetsu/                      Bunsetsu refinement sub-mode
 │   │   ├── refiner.h
 │   │   └── refiner.cpp
-│   ├── skk_integration/               fcitx5-skk へのフック実装
+│   ├── skk_integration/               Hooks into fcitx5-skk
 │   │   ├── mozc_integration.h
 │   │   └── mozc_integration.cpp
-│   └── proto/                         (build 時に protoc 生成)
+│   └── proto/                         (protoc-generated at build time)
 │       └── .gitkeep
 └── modules/
     └── home-manager.nix
 ```
 
-### ビルド統合
+### Build integration
 
-`patches/fcitx5-skk/0001-add-mozc-integration-hooks.patch` は fcitx5-skk の以下を変更する:
+`patches/fcitx5-skk/0001-add-mozc-integration-hooks.patch` changes the
+following in fcitx5-skk:
 
-1. `src/CMakeLists.txt` — `src/skk_integration/` 配下を `target_sources` に追加、protobuf と generated proto を `target_link_libraries`/`target_include_directories` に追加。
-2. `src/skk.h` — `SkkState` に `std::unique_ptr<MozcIntegration> mozc_;` を追加 (forward declaration)。
+1. `src/CMakeLists.txt` — adds `src/skk_integration/` (and friends) to
+   `target_sources`; adds protobuf and the generated proto to
+   `target_link_libraries`/`target_include_directories`.
+2. `src/skk.h` — adds `std::unique_ptr<MozcIntegration> mozc_;` to
+   `SkkState` (forward-declared).
 3. `src/skk.cpp`:
-   - `SkkState::keyEvent` 先頭で `if (mozc_ && mozc_->handleKey(keyEvent)) return;` を挿入。
-   - `SkkState::updateUI` で libskk 候補を取得した直後に `if (mozc_) mozc_ ->augmentCandidates(candidateList.get());` を挿入。
-   - `SkkEngine` コンストラクタで `mozc_ = std::make_unique<MozcIntegration>(...)` 相当を構築。
+   - At the top of `SkkState::keyEvent`, insert
+     `if (mozc_ && mozc_->handleKey(keyEvent)) return;`.
+   - In `SkkState::updateUI`, right after libskk's candidates are
+     fetched, insert
+     `if (mozc_) mozc_->augmentCandidates(candidateList.get());`.
+   - In the `SkkEngine` constructor, build
+     `mozc_ = std::make_unique<MozcIntegration>(...)`.
 
-patch は実 source を見ながら最小行数で作る。新規ファイルは patch ではなく `src/` 配下にそのまま置き、`postUnpack` で fcitx5-skk のツリーにコピーしてからビルドする。
+The patch is intentionally minimal-line, written by reading the real
+source. New files are NOT shipped in the patch — they live under `src/`
+in this repo and are copied into the fcitx5-skk tree via `postUnpack`
+before the build.
 
-### Mozc IPC プロトコル
+### Mozc IPC protocol
 
-Mozc の `commands.proto` を `nixpkgs.mozc.src` の `src/protocol/commands.proto` から取り込み、protoc で `commands.pb.{h,cc}` を生成。
+Pull Mozc's `commands.proto` from `nixpkgs.mozc.src` at
+`src/protocol/commands.proto` and generate `commands.pb.{h,cc}` with
+`protoc`.
 
-- UNIX socket は `$XDG_RUNTIME_DIR/.mozc.<uid>.session` (`mozc/src/ipc/unix_ipc.cc` の慣習に合わせる)
-- フレーミング: 4-byte little-endian message length + protobuf payload (mozc の `IPCClient` 実装に合わせる)
-- 主に使うコマンド: `Input{type=SEND_KEY/SEND_COMMAND, ...}` で:
-  - `SEND_KEY` (yomi を投げる) → `Output{preedit, candidates}`
+- UNIX socket: `$XDG_RUNTIME_DIR/.mozc.<uid>.session`, matching the
+  convention in `mozc/src/ipc/unix_ipc.cc`.
+- Framing: 4-byte little-endian message length + protobuf payload (to
+  match Mozc's `IPCClient`).
+- Main commands: `Input{type=SEND_KEY/SEND_COMMAND, ...}` —
+  - `SEND_KEY` (throw the yomi) → `Output{preedit, candidates}`
   - `SEND_COMMAND{type=CONVERT/CONVERT_NEXT/...}`
-  - `SEND_COMMAND{type=RESET_CONTEXT}` 毎クエリ後に送信、学習を発生させない
-- mozc_server が起動していない場合: `mozc_server --mode=server &` を fork + 短時間 retry で再接続
+  - `SEND_COMMAND{type=RESET_CONTEXT}` sent after every query so no
+    learning is triggered.
+- If `mozc_server` isn't running, fork `mozc_server --mode=server &`
+  and short-retry the connection.
 
-### Mozc の学習を発生させない方法
+### How we keep Mozc from learning
 
-通常の mozc セッションは:
+A typical Mozc session looks like:
 ```
 CREATE_SESSION → SEND_KEY (yomi) → SEND_COMMAND{CONVERT} → SEND_COMMAND{SUBMIT} → DELETE_SESSION
 ```
-SUBMIT が user_history に学習を残すので、これを避ける。代わりに:
+`SUBMIT` is what writes to `user_history`, so we avoid it. Instead:
 ```
-CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [候補抽出] → SEND_COMMAND{RESET_CONTEXT} → DELETE_SESSION
+CREATE_SESSION → SEND_KEY → SEND_COMMAND{CONVERT} → [extract candidates] → SEND_COMMAND{RESET_CONTEXT} → DELETE_SESSION
 ```
-としてセッションを破棄。学習はすべて SKK 個人辞書 (~/.skk-jisyo) に任せる。
+The session is discarded. Learning lives entirely in libskk's writable
+user dictionary slot (by default `~/.local/share/fcitx5/skk/user.dict`).
 
-## fcitx5-mozc との同居について
+## Coexistence with fcitx5-mozc
 
-ユーザが fcitx5-mozc アドオン (`mozc` IM = 単独 mozc 入力) を有効化したまま skk-mozc を併用すると、両者は **同じ `mozc_server` インスタンスを共用** します。これは設計上意図的 (HM module でも `pkgs.mozc` を入れているのは server バイナリ提供のため) ですが、以下の挙動に注意:
+If a user keeps the fcitx5-mozc addon enabled (the `mozc` IM = pure
+Mozc input) while using skk-mozc, the two **share the same
+`mozc_server` instance**. This is intentional by design (the HM module
+even pulls in `pkgs.mozc` precisely to provide the server binary), but
+there are behavioural consequences:
 
-- skk-mozc は **pure lookup の前提** で動いており、commit を mozc 側に伝えません (`SUBMIT` を送らず、`RESET_CONTEXT` + `DELETE_SESSION` でセッションを破棄)。
-- fcitx5-mozc を使って入力した語は mozc の `user_history` に学習され、その学習結果は skk-mozc の query にも反映されます (片方向の影響)。
-- これは大抵のケースで「便利」(fcitx5-mozc で打った語が skk-mozc にも出る) ですが、「skk 個人辞書 (~/.skk-jisyo) のみで学習を一本化したい」という設計と緩く矛盾します。
-- 完全に分離したいユーザは fcitx5-mozc を addons から外すか、別ユーザで運用してください。
+- skk-mozc operates on a **pure lookup** assumption — it never tells
+  Mozc about commits (it does NOT send `SUBMIT`, and tears the session
+  down with `RESET_CONTEXT` + `DELETE_SESSION`).
+- Anything typed through fcitx5-mozc lands in Mozc's `user_history`,
+  and that learning is reflected back in skk-mozc's queries
+  (one-directional cross-pollination).
+- This is convenient most of the time (words you type via fcitx5-mozc
+  surface in skk-mozc too), but it loosely conflicts with the design
+  goal of "all learning concentrated in the SKK personal dict only".
+- Users who want a clean split should remove fcitx5-mozc from `addons`
+  or operate it under a separate user account.
 
-## マイルストーン
+## Milestones
 
-- **M0** ✅: scaffolding (flake.nix, CLAUDE.md, ディレクトリ構成、ソーススケルトン)
-- **M1** ✅: Mozc IPC クライアントを単体テストで動かす (`mozc-client-cli`)
-- **M2** ✅ (ビルドのみ): fcitx5-skk patch + マージャ統合の `skk.so` がビルド完走。実機ロード検証は M5。
-- **M3** ✅ (実装+ビルド): 全文節変換 + RefinementSession による live mozc IPC 経由の境界調整 / 注目移動 / 候補巡回。
-- **M4** ✅: `nix flake check` 全 outputs 通過。
-- **M5** ✅ (コード完成): recordCommit を libskk user dict (`skk_dict_select_candidate` + `skk_dict_save`) に接続、Preedit.highlighted_position から focused_segment を抽出、refinement モードの preedit を underline + HighLight の 3 段スライスで描画、候補 annotation を comment slot に。実機ロードは別途 NixOS マシンで HM 経由で行う。
+- **M0** ✅: scaffolding (flake.nix, CLAUDE.md, directory layout,
+  source skeleton)
+- **M1** ✅: Mozc IPC client wired up and verified standalone
+  (`mozc-client-cli`)
+- **M2** ✅ (build only): fcitx5-skk patch + merger integration with
+  the resulting `skk.so` compiling cleanly. Real-machine load
+  verification is deferred to M5.
+- **M3** ✅ (impl + build): Full multi-bunsetsu conversion +
+  RefinementSession driving boundary tweaks / focus moves / candidate
+  cycling via live Mozc IPC.
+- **M4** ✅: `nix flake check` passes for all outputs.
+- **M5** ✅ (code complete): `recordCommit` wired to libskk user dict
+  (`skk_dict_select_candidate` + `skk_dict_save`); `focused_segment`
+  extracted from `Preedit.highlighted_position`; refinement-mode
+  preedit rendered as a 3-slice underline + HighLight; candidate
+  annotation routed to the comment slot. Real-machine load happens
+  separately on a NixOS host via HM.
 
-**現状: コードレベルで M0〜M5 すべて実装/ビルド完了。実機検証 (M5 残り) は NixOS マシン上での運用テスト。**
+**Current state: M0–M5 fully implemented / built at the code level.
+Real-machine verification (M5 tail) is operational testing on a NixOS
+machine.**
 
-### M1 で判明した Mozc IPC の実仕様 (CLAUDE.md 当初記載との差分)
+### Mozc IPC details discovered during M1 (deltas from the original notes)
 
-実装中に CLI で疎通させた結果、当初推測していた仕様と異なる点が 4 つあった。コードはすべて実仕様に合わせて修正済み。
+While prototyping with the CLI, four points turned out to differ from
+the initial guess in this file. The code already matches the real
+behaviour.
 
-| 項目 | 当初の推測 (誤) | 実仕様 (正) |
+| Item | Original guess (wrong) | Real behaviour (right) |
 |------|----------------|-------------|
-| ソケットパス | `$XDG_RUNTIME_DIR/.mozc.<uid>.session` (ファイル UNIX socket) | `~/.config/mozc/.session.ipc` を rendezvous file として読み、中の `mozc.ipc.IPCPathInfo` proto の `key` フィールドを取り出し、abstract socket `\0tmp/.mozc.<key>.session` に接続 |
-| 変換トリガ | `SessionCommand::CONVERT` を送る | `SessionCommand::CONVERT` は存在しない。SEND_KEY で SPACE (special_key=SPACE) を送ると mozc セッションが内部状態で変換に遷移 |
-| 候補ランキング | `CandidateWord.cost()` | `CandidateWord` に cost フィールドはない。`CandidateWord.index()` (mozc 内部ランク) が利用可能で、これを cost 代用として merger に渡す |
-| メッセージフレーミング | 4-byte little-endian length prefix + protobuf payload | フレーム長は無く、`send(payload) → shutdown(SHUT_WR) → recv until EOF → close` で 1 メッセージ。サーバ側も同じプロトコル |
+| Socket path | `$XDG_RUNTIME_DIR/.mozc.<uid>.session` (file UNIX socket) | Read `~/.config/mozc/.session.ipc` as a rendezvous file, pull the `key` field out of the `mozc.ipc.IPCPathInfo` proto inside it, then connect to the abstract socket `\0tmp/.mozc.<key>.session` |
+| Conversion trigger | Send `SessionCommand::CONVERT` | `SessionCommand::CONVERT` doesn't exist. Sending SPACE (special_key=SPACE) via SEND_KEY transitions the Mozc session into conversion internally |
+| Candidate ranking | `CandidateWord.cost()` | `CandidateWord` has no cost field. `CandidateWord.index()` (Mozc's internal rank) is available and we pass it to the merger as a cost stand-in |
+| Message framing | 4-byte little-endian length prefix + protobuf payload | No frame length. One message = `send(payload) → shutdown(SHUT_WR) → recv until EOF → close`. The server speaks the same protocol |
 
-副次的な発見:
-- `commands.proto` は `protocol/candidate_window.proto`, `protocol/config.proto`, `protocol/engine_builder.proto`, `protocol/user_dictionary_storage.proto` を import する。protoc に `-I proto` を渡し、`proto/protocol/*.proto` 配下に全 proto を staged する必要がある。
-- `IPCPathInfo` proto は `src/ipc/ipc.proto` (commands.proto と別パッケージ)。ビルドに追加で取り込む。
-- 「わたしはがくせいです」のような長文をひと SPACE で投げると、Mozc は **第一文節のみ** 確定形を返す。完全な多文節変換結果を取るには文節をまたいだ追加 SPACE / CONVERT_NEXT_PAGE 等を発行する必要があり、これは M2/M3 で対応する。
-- 「さしみほうちょう」は Mozc も「刺し身」+「包丁」に文節分割するため、`top_candidates` には「刺身包丁」が出ない。これは Refiner で全文節を結合した値を別途生成して候補に加える必要がある。
+Secondary findings:
+- `commands.proto` imports `protocol/candidate_window.proto`,
+  `protocol/config.proto`, `protocol/engine_builder.proto`, and
+  `protocol/user_dictionary_storage.proto`. Pass `-I proto` to
+  `protoc` and stage all of them under `proto/protocol/*.proto`.
+- `IPCPathInfo` lives in `src/ipc/ipc.proto` (a different proto
+  package from `commands.proto`); pull it into the build separately.
+- For a long sentence like "わたしはがくせいです" sent with a single
+  SPACE, Mozc returns the confirmed form for the **first bunsetsu
+  only**. Getting the full multi-bunsetsu result requires additional
+  SPACE / CONVERT_NEXT_PAGE etc. across segments — handled in M2/M3.
+- For "さしみほうちょう" Mozc also splits into "刺し身" + "包丁", so
+  `top_candidates` doesn't carry "刺身包丁" as a single entry. The
+  Refiner has to synthesize a candidate from the joined segments.
 
-### M3 の構造
+### M3 structure
 
-- **全文節変換**: `Output.preedit.segment[].value` を concat した文字列を `top_candidates` の先頭 (cost = -1) に prepend。SKK ▽ SPC で「わたしはがくせいです」→「私は学生です」が即座に出る。
-- **RefinementSession**: `MozcClient::beginRefinement(yomi)` がライブ mozc セッションを保持する `RefinementSession` を返し、Refiner はそれに `shrink/grow/focusNext/focusPrev/next/prev` を呼ぶ。内部は SEND_KEY + SpecialKey(LEFT/RIGHT/UP/SPACE) + ModifierKey(SHIFT) を実発行。
-- **学習の発生防止**: `RefinementSession` のデストラクタが `RESET_CONTEXT` → `DELETE_SESSION` の順で発行し、mozc 側に user_history が残らない。
-- **追加 SPACE ループ**: Refiner.dispatch(NextCandidate) → SPACE 送信 → mozc が「次候補」を Output.preedit に反映するので、これでサブモードのまま候補巡回ができる。
+- **Full multi-bunsetsu conversion**: concatenate
+  `Output.preedit.segment[].value` and prepend the resulting string to
+  `top_candidates` at the head (cost = -1). SKK ▽ + SPC on
+  「わたしはがくせいです」 then instantly returns 「私は学生です」.
+- **RefinementSession**: `MozcClient::beginRefinement(yomi)` returns a
+  `RefinementSession` that holds a live Mozc session; the Refiner
+  drives it via `shrink/grow/focusNext/focusPrev/next/prev`.
+  Internally it actually emits SEND_KEY + SpecialKey(LEFT/RIGHT/UP/SPACE) +
+  ModifierKey(SHIFT).
+- **No-learn enforcement**: `RefinementSession`'s destructor issues
+  `RESET_CONTEXT` then `DELETE_SESSION`, in that order, so nothing
+  lingers in Mozc's `user_history`.
+- **Extra-SPACE loop**: Refiner.dispatch(NextCandidate) → SPACE sent →
+  Mozc reflects the "next candidate" in `Output.preedit`, letting us
+  cycle without leaving the sub-mode.
 
-注: 「focused segment」の追跡は mozc が Preedit.highlighted_position で示すが、現バージョンの抽出ではこれをまだ拾っていない (v0 では UI 側の focused 表示は常に segment 0 として描く)。M5 で実機検証時に対応。
+Note: tracking the "focused segment" is something Mozc surfaces via
+`Preedit.highlighted_position`, but the current extractor doesn't pick
+that up yet (v0 always draws focus on segment 0 in the UI). Handled
+during real-machine verification in M5.
 
-### M2 で判明した点 (修正済み)
+### M2 findings (already addressed)
 
-- fcitx5-skk 本体は Qt6 ベースの設定 GUI (`gui/`) を含むが、HM 経由の宣言的設定で運用するため `-DENABLE_QT=Off` でスキップ。
-- `mozc_integration.cpp::recordCommit` が `skk_candidate_new(midasi, gboolean okuri, text, annotation, output)` の 5 引数シグネチャに合わない 3 引数呼び出しになっており失敗。libskk の user dict 書き込み公式 API は実は `SkkCandidate` を作るだけでは持続化されず、`SkkUserDict` のハンドルに append する必要があるため、M3 までは stub に戻した (CLAUDE.md「オープン論点」に既に記載)。
-- Patch は全 3 ファイル (skk.h, skk.cpp, src/CMakeLists.txt) クリーン適用、`skk.so` 777 KB として生成、fcitx5/libskk/libprotobuf にリンク済み。
+- fcitx5-skk upstream ships a Qt6 configuration GUI (`gui/`). Since
+  we run it declaratively via HM, build with `-DENABLE_QT=Off` and
+  skip it.
+- `mozc_integration.cpp::recordCommit` was originally a 3-argument
+  call that didn't match `skk_candidate_new(midasi, gboolean okuri,
+  text, annotation, output)`'s 5-argument signature, so it failed.
+  libskk's official user-dict write API doesn't persist just by
+  constructing a `SkkCandidate`; you have to append it to a `SkkUserDict`
+  handle. The function was stubbed out until M3 (see "Open issues").
+- The patch applies cleanly across all 3 files (`skk.h`, `skk.cpp`,
+  `src/CMakeLists.txt`); `skk.so` builds at 777 KB and links against
+  fcitx5/libskk/libprotobuf.
 
-### M1 で疎通確認できた候補例
+### M1 sanity-check candidates
 
-| 入力 (yomi) | 先頭 mozc 候補 | コメント |
+| Input (yomi) | Top Mozc candidate | Notes |
 |-------------|---------------|---------|
-| あさひしんぶん | 朝日新聞 | 単一文節で正常 |
-| けいざいさんぎょうしょう | 経済産業省 | 4 漢字複合語が一発で出る |
-| きょうのてんき | 今日の天気 | 多文節統合済み (mozc 側で 1 候補化) |
-| さしみほうちょう | 刺し身 | 「包丁」が落ちる。M3 Refiner の合成で復元想定 |
-| わたしはがくせいです | 私は | 第一文節のみ。M2 で追加 SPACE 発行 |
+| あさひしんぶん | 朝日新聞 | Single bunsetsu, behaves correctly |
+| けいざいさんぎょうしょう | 経済産業省 | 4-kanji compound returned in one shot |
+| きょうのてんき | 今日の天気 | Multi-bunsetsu collapsed (Mozc-side single candidate) |
+| さしみほうちょう | 刺し身 | "包丁" dropped — to be recovered by M3 Refiner composition |
+| わたしはがくせいです | 私は | First bunsetsu only — multi-SPACE handled in M2 |
 
-## 開発
+## Development
 
 ```bash
-# devShell に入る
+# Enter the dev shell
 nix develop
 
-# fcitx5-skk のソースを patches/ で patch して試しにビルド
+# Build with fcitx5-skk patched from patches/
 nix build .#fcitx5-skk-mozc
 
-# IPC クライアント単体テスト (要 mozc_server 起動中)
-nix run .#mozc-client-cli -- "あさひしんぶん"
+# Standalone IPC sanity check (requires mozc_server up)
+nix run .#mozc-client-cli -- "さしみほうちょう"
 ```
 
-## 既知のオープン論点
+## Known open questions
 
-- mozc_server のソケットパス検出は upstream の `mozc/src/base/system_util.cc` のロジック依存。Linux では `$XDG_RUNTIME_DIR/.mozc.<uid>.session` が標準だが、Wayland セッションでないケースの fallback を要確認。
-- 文節境界調整 UI の表示 (どの文節が「注目」されているか) は fcitx5 の `Text` の `HighLight` flag で表現するが、SKK の preedit と競合しないかは実機検証が必要。
-- mozc-server の version skew (古い mozc に新しい proto で叩く) は v1 では考慮しない (同じ flake.lock 内で proto/server を同期させる前提)。
+- `mozc_server` socket-path detection depends on the upstream logic in
+  `mozc/src/base/system_util.cc`. On Linux,
+  `$XDG_RUNTIME_DIR/.mozc.<uid>.session` is standard, but the fallback
+  for non-Wayland sessions still needs verification.
+- The bunsetsu refinement UI (which bunsetsu is "focused") is rendered
+  via fcitx5's `Text` `HighLight` flag, but whether this collides with
+  SKK's own preedit rendering needs real-machine verification.
+- Mozc-server version skew (hitting an old `mozc_server` with a new
+  proto) is out of scope for v1 (we assume proto/server stay in sync
+  via flake.lock).
