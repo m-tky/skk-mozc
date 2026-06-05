@@ -9,9 +9,10 @@ SKK's input philosophy is preserved (explicit conversion boundaries, ▽ / ▼ m
 ## What you get
 
 - When you press SPC in ▽ mode, the SKK dictionary lookup and a Mozc query run in parallel. The results are merged.
-- **Compound words and full sentences just work**:
-  - `あさひしんぶん` → `朝日新聞`
-  - `けいざいさんぎょうしょう` → `経済産業省`
+- **Compound words and full sentences that the SKK system dictionary doesn't carry**:
+  - `さしみほうちょう` → `刺し身包丁` (kanji compound, not in SKK-JISYO.L)
+  - `くらうどさーびす` → `クラウドサービス` (loanword compound)
+  - `にゅーよーくしゅう` → `ニューヨーク州` (loanword + kanji suffix)
   - `わたしはがくせいです` → `私は学生です` (multi-bunsetsu)
 - Your personal SKK dictionary (`~/.skk-jisyo`) always wins. Picking a Mozc-only candidate immediately learns it into `~/.skk-jisyo`, so it surfaces at the top on the second use, behaving like any other SKK entry.
 - Mozc-style bunsetsu refinement while a multi-segment candidate is showing:
@@ -75,8 +76,8 @@ nix build github:m-tky/skk-mozc#fcitx5-skk-mozc
 
 ```bash
 # Requires a running mozc_server.
-nix run github:m-tky/skk-mozc#mozc-client-cli -- "あさひしんぶん"
-# => 朝日新聞 / 朝日新聞 / あさひしんぶん / ...
+nix run github:m-tky/skk-mozc#mozc-client-cli -- "さしみほうちょう"
+# => 刺し身包丁 / 刺し身 / 刺身 / ...
 ```
 
 ### Option B: Without Nix
@@ -129,10 +130,10 @@ pkill -SIGHUP fcitx5
 Enable SKK in `fcitx5-configtool`, open any text editor, then:
 
 ```
-Q あさひしんぶん SPC
+Q さしみほうちょう SPC
 ```
 
-`朝日新聞` should be near the top of the candidate list.
+`刺し身包丁` should be near the top of the candidate list (it isn't in SKK-JISYO.L, so plain fcitx5-skk wouldn't find it).
 
 ## Configuration
 
@@ -168,7 +169,7 @@ nix develop
 
 # Standalone IPC sanity-check CLI
 nix build .#mozc-client-cli
-./result/bin/mozc-client-cli "あさひしんぶん"
+./result/bin/mozc-client-cli "さしみほうちょう"
 
 # Full addon
 nix build .#fcitx5-skk-mozc

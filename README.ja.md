@@ -3,14 +3,15 @@
 > English version: [README.md](./README.md)
 
 fcitx5-skk に **Mozc 辞書由来の候補** を統合する fcitx5 入力メソッド。
-SKK の入力哲学はそのまま残しつつ、SKK 辞書にない複合語 (例: 「あさひしんぶん」→「朝日新聞」) を Mozc の連文節変換でカバーします。
+SKK の入力哲学はそのまま残しつつ、SKK 辞書にない複合語 (例: 「さしみほうちょう」→「刺し身包丁」、「くらうどさーびす」→「クラウドサービス」) を Mozc の連文節変換でカバーします。
 
 ## 何が出来るのか
 
 - SKK の▽モードで SPC を押したとき、SKK 辞書と並列に Mozc 辞書を引いて候補をマージ。
-- **複合語が一発で出る**:
-  - 「あさひしんぶん」→「朝日新聞」
-  - 「けいざいさんぎょうしょう」→「経済産業省」
+- **SKK システム辞書に載っていない複合語・カタカナ語・連文節がそのまま出る**:
+  - 「さしみほうちょう」→「刺し身包丁」 (SKK-JISYO.L には未収録)
+  - 「くらうどさーびす」→「クラウドサービス」 (カタカナ複合語)
+  - 「にゅーよーくしゅう」→「ニューヨーク州」 (カタカナ + 漢字接尾辞)
   - 「わたしはがくせいです」→「私は学生です」 (連文節)
 - 個人辞書 (`~/.skk-jisyo`) のヒットは常に最上位。Mozc 由来の候補も、選んだ瞬間に個人辞書に学習されるので、二度目以降は SKK のトップヒットとして即座に出ます。
 - 文節境界の調整も可能 (Mozc 互換):
@@ -78,8 +79,8 @@ nix build github:m-tky/skk-mozc#fcitx5-skk-mozc
 
 ```bash
 # mozc_server が起動している状態で:
-nix run github:m-tky/skk-mozc#mozc-client-cli -- "あさひしんぶん"
-# => 朝日新聞 / 朝日新聞 / あさひしんぶん / ...
+nix run github:m-tky/skk-mozc#mozc-client-cli -- "さしみほうちょう"
+# => 刺し身包丁 / 刺し身 / 刺身 / ...
 ```
 
 ### 方法 B: Nix を使わない場合
@@ -132,10 +133,10 @@ pkill -SIGHUP fcitx5
 fcitx5-configtool で SKK を有効化し、適当なテキストエディタで:
 
 ```
-Q あさひしんぶん SPC
+Q さしみほうちょう SPC
 ```
 
-を打って「朝日新聞」が候補リストの上位に出れば成功です。
+を打って「刺し身包丁」が候補リストの上位に出れば成功です (SKK-JISYO.L には無いので素の fcitx5-skk では引けない単語)。
 
 ## 設定
 
@@ -171,7 +172,7 @@ nix develop
 
 # 単体テスト用 CLI (mozc_server に直接問い合わせる)
 nix build .#mozc-client-cli
-./result/bin/mozc-client-cli "あさひしんぶん"
+./result/bin/mozc-client-cli "さしみほうちょう"
 
 # 本体
 nix build .#fcitx5-skk-mozc
