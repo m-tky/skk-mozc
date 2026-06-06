@@ -23,9 +23,11 @@
 
 #include <array>
 #include <cstdlib>
+#include <exception>
 #include <functional>
 #include <optional>
 #include <string>
+#include <typeinfo>
 
 namespace skk_mozc {
 
@@ -453,31 +455,49 @@ lookupSkkCandidates(MozcIntegration::Impl *impl, const std::string &yomi);
 
 bool MozcIntegration::handleKey(fcitx::KeyEvent &keyEvent,
                                 fcitx::InputContext *ic) {
-    if (keyEvent.isRelease()) {
-        // Release events do not drive state; bail before classification so
-        // we don't burn cycles on every key release.
+    // Boundary exception barrier. fcitx5's contract for addon callbacks
+    // (and IO event sources in general) is "do not throw". If an exception
+    // escapes here, fcitx5's IOEventCallback wrapper catches it via
+    // FCITX_FATAL and abort()s the *entire* fcitx5 process — we have seen
+    // that in the wild as a SIGABRT of the daemon. Catch everything,
+    // record what we can, and degrade gracefully by declining the key
+    // (letting libskk handle it normally).
+    try {
+        if (keyEvent.isRelease()) {
+            // Release events do not drive state; bail before classification
+            // so we don't burn cycles on every key release.
+            return false;
+        }
+        namespace dp = skk_mozc::dispatch;
+        dp::RouteState st{
+            /*panel_active=*/impl_->panel_active,
+            /*refiner_armed=*/impl_->refiner && !impl_->refiner->done(),
+        };
+        MozcIntegration::SkkConfigSnapshot cfg;
+        if (impl_->config_accessor) cfg = impl_->config_accessor();
+        auto target = dp::decideRoute(st,
+            classifyPanelKey(keyEvent.key(), cfg.choose_key));
+        switch (target) {
+        case dp::RouteTarget::RefinerDispatch:
+            return handleRefinerKey_(keyEvent, ic);
+        case dp::RouteTarget::PanelDispatch:
+            return handlePanelKey_(keyEvent, ic);
+        case dp::RouteTarget::OpenPanel:
+            return maybeOpenMozcPanel_(keyEvent, ic);
+        case dp::RouteTarget::Passthrough:
+            return false;
+        }
+        return false;
+    } catch (const std::exception &e) {
+        SKK_MOZC_LOG("handleKey: caught exception (type=%s): %s — "
+                     "declining key so libskk owns it",
+                     typeid(e).name(), e.what());
+        return false;
+    } catch (...) {
+        SKK_MOZC_LOG("handleKey: caught non-std exception — "
+                     "declining key so libskk owns it");
         return false;
     }
-    namespace dp = skk_mozc::dispatch;
-    dp::RouteState st{
-        /*panel_active=*/impl_->panel_active,
-        /*refiner_armed=*/impl_->refiner && !impl_->refiner->done(),
-    };
-    MozcIntegration::SkkConfigSnapshot cfg;
-    if (impl_->config_accessor) cfg = impl_->config_accessor();
-    auto target = dp::decideRoute(st,
-        classifyPanelKey(keyEvent.key(), cfg.choose_key));
-    switch (target) {
-    case dp::RouteTarget::RefinerDispatch:
-        return handleRefinerKey_(keyEvent, ic);
-    case dp::RouteTarget::PanelDispatch:
-        return handlePanelKey_(keyEvent, ic);
-    case dp::RouteTarget::OpenPanel:
-        return maybeOpenMozcPanel_(keyEvent, ic);
-    case dp::RouteTarget::Passthrough:
-        return false;
-    }
-    return false;
 }
 
 namespace {
@@ -820,8 +840,20 @@ void MozcIntegration::augmentCandidates(fcitx::InputContext *ic,
     // the SPC-intercept path in maybeOpenMozcPanel_, before libskk has a
     // chance to react. Leaving this stub keeps the patched skk.cpp call site
     // unchanged so a future bump can reuse it.
-    (void)ic;
-    (void)libskk_candidates;
+    //
+    // The try/catch is here for the same reason as in handleKey: if this
+    // ever grows real logic again, a stray throw from this code path would
+    // be FATAL'd by fcitx5's updateUI IO callback wrapper and kill the
+    // daemon. Keep the boundary safe regardless of what the body does.
+    try {
+        (void)ic;
+        (void)libskk_candidates;
+    } catch (const std::exception &e) {
+        SKK_MOZC_LOG("augmentCandidates: caught exception (type=%s): %s",
+                     typeid(e).name(), e.what());
+    } catch (...) {
+        SKK_MOZC_LOG("augmentCandidates: caught non-std exception");
+    }
 }
 
 void MozcIntegration::recordCommit(const std::string &yomi,
