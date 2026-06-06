@@ -330,7 +330,19 @@ void installMergedPanel(MozcIntegration::Impl *impl,
                 SKK_MOZC_LOG("panel: also learned %zu segments",
                              segments.size());
             }
-            clearMozcPanel(self, ictx, /*reset_libskk=*/true);
+            // NOTE: do NOT call clearMozcPanel(self, ictx, ...) from here.
+            // We are executing inside CallbackCandidateWord::select, which
+            // was reached via list->candidate(idx).select(ic). Calling
+            // clearMozcPanel would invoke ic->inputPanel().reset(), which
+            // destroys the very CandidateList that owns this lambda — i.e.
+            // destroys *this CallbackCandidateWord* while its select() body
+            // is still on the call stack. That is undefined behaviour and
+            // matches the user-reported "candidates が一番下まで来てから
+            // non-Space を打つと crash" symptom (fcitx5's IOEventCallback
+            // catches the resulting exception → FCITX_FATAL → abort).
+            // Panel teardown is now done by the caller (handlePanelKey_)
+            // *after* select() returns, so the candidate list is destroyed
+            // only when no one is iterating over it any more.
         };
         if (!desc.empty()) {
             fcitx_list->append<CallbackCandidateWord>(
@@ -715,10 +727,15 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         keyEvent.filterAndAccept();
         return true;
     case A::Commit: {
+        // IMPORTANT: tear the panel down AFTER select() returns, never from
+        // inside the candidate's select callback — that would destroy this
+        // CandidateWord while we're still executing its select() body. See
+        // the long NOTE in installMergedPanel's cb_ for the symptom.
         int idx = list->globalCursorIndex();
         if (idx >= 0 && idx < list->totalSize()) {
             list->candidate(idx).select(ic);
         }
+        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         keyEvent.filterAndAccept();
         return true;
     }
@@ -728,18 +745,19 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         if (idx >= 0 && idx < list->totalSize()) {
             list->candidate(idx).select(ic);
         }
+        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         keyEvent.filterAndAccept();
         return true;
     }
     case A::CommitAndForward: {
-        // Commit the focused candidate (its select() callback runs
-        // full_reset, leaving libskk in a fresh ▽-less state), then return
-        // false WITHOUT filterAndAccept'ing so the key continues through
-        // SkkState::keyEvent to libskk — which then begins a new SKK input
-        // with the typed character.
+        // Commit the focused candidate, fully reset libskk (so it is in
+        // direct mode), then return false WITHOUT filterAndAccept'ing so the
+        // typed key continues through SkkState::keyEvent to libskk — which
+        // then begins a new SKK input from the typed character.
         int idx = list->globalCursorIndex();
         if (idx >= 0 && idx < list->totalSize()) {
             list->candidate(idx).select(ic);
+            clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         } else {
             clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
         }
