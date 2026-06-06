@@ -284,16 +284,32 @@ void MozcClient::resetContext() {
 
 std::optional<MozcConversionResult>
 MozcClient::convert(const std::string &yomi) {
-    if (yomi.empty() || !reachable_) {
+    if (yomi.empty()) {
         return std::nullopt;
     }
+    if (!reachable_) {
+        auto since = std::chrono::steady_clock::now() - last_unreachable_at_;
+        if (since < unreachable_cooldown_) {
+            // Still cooling down — short-circuit so we don't pay the probe
+            // cost on every keystroke while mozc_server is down.
+            return std::nullopt;
+        }
+        // Cooldown elapsed: optimistically clear the flag and retry the
+        // probe below. If it fails again the cooldown restarts.
+        SKK_MOZC_LOG("convert: cooldown elapsed, re-probing mozc_server");
+        reachable_ = true;
+    }
     SKK_MOZC_LOG("convert: yomi=\"%s\"", yomi.c_str());
+    // Cache lookup is intentionally BEFORE the probe: a fresh cached answer
+    // can be served even when mozc_server is currently unreachable, so a
+    // transient server restart doesn't make recently-typed yomi disappear.
     if (auto cached = impl_->cacheGet(yomi, options_.cache_ttl)) {
         SKK_MOZC_LOG("convert: cache HIT for yomi=\"%s\"", yomi.c_str());
         return cached;
     }
     if (!ensureServerReachable(*impl_, options_)) {
         reachable_ = false;
+        last_unreachable_at_ = std::chrono::steady_clock::now();
         return std::nullopt;
     }
 
@@ -382,9 +398,15 @@ feedYomiAndConvert(MozcClient::Impl &impl,
 
 std::unique_ptr<RefinementSession>
 MozcClient::beginRefinement(const std::string &yomi) {
-    if (yomi.empty() || !reachable_) return nullptr;
+    if (yomi.empty()) return nullptr;
+    if (!reachable_) {
+        auto since = std::chrono::steady_clock::now() - last_unreachable_at_;
+        if (since < unreachable_cooldown_) return nullptr;
+        reachable_ = true;
+    }
     if (!ensureServerReachable(*impl_, options_)) {
         reachable_ = false;
+        last_unreachable_at_ = std::chrono::steady_clock::now();
         return nullptr;
     }
     mc::Input create;

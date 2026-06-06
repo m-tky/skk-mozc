@@ -113,7 +113,16 @@ public:
 private:
     Impl *impl_;
     MozcClientOptions options_;
+    // Tri-state reachability: `reachable_` flips to false on first IPC
+    // failure and stays false until `unreachable_cooldown_` has elapsed
+    // since `last_unreachable_at_`. The original "permanent latch" design
+    // meant a single mozc_server hiccup (restart, transient socket EAGAIN,
+    // etc.) disabled mozc candidates for the rest of the fcitx5 daemon's
+    // lifetime — a silent regression for the user. The cooldown lets us
+    // recover automatically without paying the probe cost on every query.
     bool reachable_ = true;
+    std::chrono::steady_clock::time_point last_unreachable_at_{};
+    std::chrono::milliseconds unreachable_cooldown_{5000};
 };
 
 // Live, stateful conversation with mozc_server during the refinement sub-mode.
