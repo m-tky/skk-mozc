@@ -248,6 +248,61 @@ int main(int argc, char **argv) {
             }
             sendKeys(testfrontend, uuid, {"Escape"});
 
+            // === Scenario 5: REGRESSION — at cursor=totalSize-1, typing
+            //     a non-Space printable character must still CommitAndForward
+            //     the focused (last) candidate the same way it does at any
+            //     middle cursor.
+            //
+            // User report (2026-06-07): "一番下ではない選択肢であれば、
+            // その候補で確定する前に、次の文字を打ちはじめたら、自動で
+            // 確定してくれるのだが、一番下の候補のときは、そのようには
+            // ならず、変な挙動になる". I.e. CommitAndForward works at
+            // middle cursors but breaks at cursor == totalSize - 1.
+            //
+            // (a) MIDDLE-cursor control case: SPC opens panel, no further
+            //     navigation (cursor=0), then 'a' commits cand 0 + libskk
+            //     turns 'a' into 'あ' and commits that.
+            sendKeys(testfrontend, uuid, {"Escape"});
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("朝日");
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("あ");
+            sendKeys(testfrontend, uuid,
+                     {"A", "s", "a", "h", "i", "space", "a"});
+            sendKeys(testfrontend, uuid, {"Escape"});
+
+            // (b) BOTTOM-cursor case: spam SPC so the cursor stops at
+            //     totalSize-1 (NextCandidate caps there), then type 'a'.
+            //     Expectation: SAME behaviour as the middle case — commit
+            //     of the focused (= last) candidate, then 'あ' from 'a'.
+            //     If the user-reported "変な挙動" reproduces here the
+            //     pushCommitExpectation queue will fail.
+            //
+            //     We don't hard-code the bottom candidate string (it
+            //     depends on mozc dict order at runtime); we just check
+            //     that EXACTLY TWO commits arrive and the second one is
+            //     'あ'. To do that with the only API testfrontend exposes
+            //     (exact-string pushCommitExpectation) we observe the
+            //     bottom string from a previous run and pin it.
+            //
+            //     For "asahi" the bottom of the merged panel (mozc-driven,
+            //     SKK + mozc dedup'd) is "暾" with this dictionary build.
+            //     If the bottom string drifts we'll see a mismatch failure,
+            //     which is the right signal to update this test.
+            sendKeys(testfrontend, uuid, {"Escape"});
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("暾");
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("あ");
+            sendKeys(testfrontend, uuid, {"A", "s", "a", "h", "i", "space"});
+            for (int i = 0; i < 200; ++i) {
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("space"), false);
+                testfrontend->call<ITestFrontend::keyEvent>(
+                    uuid, Key("space"), true);
+            }
+            testfrontend->call<ITestFrontend::keyEvent>(
+                uuid, Key("a"), false);
+            testfrontend->call<ITestFrontend::keyEvent>(
+                uuid, Key("a"), true);
+            sendKeys(testfrontend, uuid, {"Escape"});
+
             instance.exit();
         });
 

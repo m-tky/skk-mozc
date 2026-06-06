@@ -205,7 +205,11 @@ void mirrorFocusedCandidateToPreedit(fcitx::InputContext *ic) {
     if (!list) return;
     int idx = list->globalCursorIndex();
     if (idx < 0 || idx >= list->totalSize()) return;
-    auto display = list->candidate(idx).text().toString();
+    // candidate(int) is PAGE-RELATIVE; candidateFromAll(int) is GLOBAL.
+    // globalCursorIndex() is global, so use the global accessor — using
+    // candidate() crashed at cursor positions outside page 0 with
+    // std::invalid_argument("CommonCandidateList: invalid index").
+    auto display = list->candidateFromAll(idx).text().toString();
     fcitx::Text pre;
     pre.append(display, {fcitx::TextFormatFlag::Underline,
                           fcitx::TextFormatFlag::HighLight});
@@ -751,9 +755,16 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         // inside the candidate's select callback — that would destroy this
         // CandidateWord while we're still executing its select() body. See
         // the long NOTE in installMergedPanel's cb_ for the symptom.
+        //
+        // ALSO IMPORTANT: candidateFromAll(int) takes a GLOBAL index;
+        // candidate(int) is page-relative. globalCursorIndex() is global,
+        // so the global accessor is the matching one. Passing the global
+        // cursor to candidate() crashed at cursor positions outside page 0
+        // with "invalid index" — the user-visible "bottom 候補で commit
+        // が効かない" regression.
         int idx = list->globalCursorIndex();
         if (idx >= 0 && idx < list->totalSize()) {
-            list->candidate(idx).select(ic);
+            list->candidateFromAll(idx).select(ic);
         }
         clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         keyEvent.filterAndAccept();
@@ -763,7 +774,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         int page_start = list->currentPage() * list->pageSize();
         int idx = page_start + decision.page_index;
         if (idx >= 0 && idx < list->totalSize()) {
-            list->candidate(idx).select(ic);
+            list->candidateFromAll(idx).select(ic);
         }
         clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         keyEvent.filterAndAccept();
@@ -776,7 +787,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         // then begins a new SKK input from the typed character.
         int idx = list->globalCursorIndex();
         if (idx >= 0 && idx < list->totalSize()) {
-            list->candidate(idx).select(ic);
+            list->candidateFromAll(idx).select(ic);
             clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
         } else {
             clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
