@@ -163,6 +163,26 @@ int main() {
         g_object_unref(ctx);
     }
 
+    // === Scenario 6: katakana mode yomi is normalised to hiragana ===
+    // SKK's katakana mode (q toggle) shows the midashigo as full-width
+    // katakana (▽サシミ), but mozc and the SKK dict are hiragana-keyed.
+    // libskkCurrentYomi must hand back hiragana so conversion behaves the
+    // same as in hiragana mode (the user-reported "katakana mode だと全角/
+    // 半角カタカナ候補しか出ない" bug).
+    {
+        SkkContext *ctx = makeContext();
+        skk_context_set_input_mode(ctx, SKK_INPUT_MODE_KATAKANA);
+        // Capitalised first letter starts ▽ henkan mode; in katakana mode the
+        // midashigo renders as katakana.
+        feed(ctx, "S a s h i m i");
+        const gchar *preedit = skk_context_get_preedit(ctx);
+        std::string p = preedit ? preedit : "";
+        std::printf("  scenario6 preedit=\"%s\"\n", p.c_str());
+        CHECK_EQ(skk_mozc::libskkCurrentYomi(ctx), "さしみ",
+                 "katakana-mode yomi normalised to hiragana");
+        g_object_unref(ctx);
+    }
+
     // === Scenario 5: end-to-end carry-over check ===
     // Mirrors the user-reported bug: convert A, abort, convert B → must NOT
     // see A's yomi concatenated.

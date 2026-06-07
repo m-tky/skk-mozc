@@ -6,10 +6,136 @@
 #include "yomi_extract.h"
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <libskk/libskk.h>
 
 namespace skk_mozc {
+
+namespace {
+
+// Decode the UTF-8 codepoint starting at s[i], advancing i past it. Returns 0
+// (and advances by 1) on a malformed lead byte so the caller can pass it
+// through verbatim without looping forever.
+uint32_t decodeUtf8(const std::string &s, size_t &i) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    uint32_t cp;
+    size_t len;
+    if ((c & 0x80) == 0)        { cp = c;        len = 1; }
+    else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+    else { i += 1; return 0; }
+    if (i + len > s.size()) { i = s.size(); return 0; }
+    for (size_t k = 1; k < len; ++k) {
+        cp = (cp << 6) | (static_cast<unsigned char>(s[i + k]) & 0x3F);
+    }
+    i += len;
+    return cp;
+}
+
+void encodeUtf8(uint32_t cp, std::string &out) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+// Normalise a katakana yomi to hiragana so mozc / the SKK dict (both
+// hiragana-keyed) see the reading SKK itself would look up. SKK's katakana
+// input mode (q toggle) shows the midashigo as full-width katakana, and the
+// hankaku-katakana mode (C-q) shows half-width — but the underlying reading
+// is hiragana. Without this, mozc treats e.g.「サシミ」as already-converted
+// text and only offers full/half-width katakana display variants, and the SKK
+// dict lookup misses entirely.
+//
+// Full-width katakana (U+30A1..U+30F6) maps to hiragana by subtracting 0x60.
+// 「ー」(U+30FC) and 「・」(U+30FB) are left as-is (they read the same in
+// hiragana context). ヷヸヹヺ (U+30F7..U+30FA) have no hiragana counterpart and
+// fall outside the range, so they pass through. Half-width katakana
+// (U+FF66..U+FF9F) is mapped via a table, folding a following dakuten /
+// handakuten mark into the voiced / semi-voiced hiragana.
+std::string katakanaToHiragana(const std::string &s) {
+    // Index = codepoint - 0xFF66 (U+FF66 ヲ … U+FF9D ン). The two marks
+    // U+FF9E (dakuten) and U+FF9F (handakuten) are handled separately below.
+    static const uint32_t kHalfBase[] = {
+        0x3092,                                 // ヲ を
+        0x3041, 0x3043, 0x3045, 0x3047, 0x3049, // ァ ィ ゥ ェ ォ
+        0x3083, 0x3085, 0x3087,                 // ャ ュ ョ
+        0x3063,                                 // ッ
+        0x30FC,                                 // ー (prolonged, kept)
+        0x3042, 0x3044, 0x3046, 0x3048, 0x304A, // ア イ ウ エ オ
+        0x304B, 0x304D, 0x304F, 0x3051, 0x3053, // カ キ ク ケ コ
+        0x3055, 0x3057, 0x3059, 0x305B, 0x305D, // サ シ ス セ ソ
+        0x305F, 0x3061, 0x3064, 0x3066, 0x3068, // タ チ ツ テ ト
+        0x306A, 0x306B, 0x306C, 0x306D, 0x306E, // ナ ニ ヌ ネ ノ
+        0x306F, 0x3072, 0x3075, 0x3078, 0x307B, // ハ ヒ フ ヘ ホ
+        0x307E, 0x307F, 0x3080, 0x3081, 0x3082, // マ ミ ム メ モ
+        0x3084, 0x3086, 0x3088,                 // ヤ ユ ヨ
+        0x3089, 0x308A, 0x308B, 0x308C, 0x308D, // ラ リ ル レ ロ
+        0x308F, 0x3093,                         // ワ ン
+    };
+
+    // Can a hiragana base take a dakuten by simple +1 (か行/さ行/た行/は行)?
+    auto canVoicePlusOne = [](uint32_t h) {
+        return (h >= 0x304B && h <= 0x3062) || // か..ち (odd = unvoiced)
+               (h >= 0x3064 && h <= 0x3068) || // つ て と
+               (h >= 0x306F && h <= 0x307B);   // は..ほ rows (handakuten too)
+    };
+    auto canHandakuten = [](uint32_t h) {
+        return h >= 0x306F && h <= 0x307B;     // は ひ ふ へ ほ
+    };
+
+    std::string out;
+    out.reserve(s.size());
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t start = i;
+        uint32_t cp = decodeUtf8(s, i);
+        if (cp == 0) {
+            // Malformed lead byte: copy the single byte through.
+            out += s[start];
+            continue;
+        }
+        // Full-width katakana → hiragana.
+        if (cp >= 0x30A1 && cp <= 0x30F6) {
+            encodeUtf8(cp - 0x60, out);
+            continue;
+        }
+        // Half-width katakana.
+        if (cp >= 0xFF66 && cp <= 0xFF9D) {
+            uint32_t h = kHalfBase[cp - 0xFF66];
+            // Fold a trailing half-width dakuten / handakuten into the kana.
+            size_t peek = i;
+            uint32_t mark = peek < s.size() ? decodeUtf8(s, peek) : 0;
+            if (mark == 0xFF9E) { // ゙ dakuten
+                if (h == 0x3046) { h = 0x3094; i = peek; } // ヴ → ゔ
+                else if (canVoicePlusOne(h)) { h += 1; i = peek; }
+            } else if (mark == 0xFF9F) { // ゚ handakuten
+                if (canHandakuten(h)) { h += 2; i = peek; }
+            }
+            encodeUtf8(h, out);
+            continue;
+        }
+        // Everything else (already hiragana, ー, ・, punctuation) passes
+        // through unchanged.
+        encodeUtf8(cp, out);
+    }
+    return out;
+}
+
+} // namespace
 
 std::string libskkCurrentYomi(SkkContext *ctx) {
     if (!ctx) return {};
@@ -42,7 +168,10 @@ std::string libskkCurrentYomi(SkkContext *ctx) {
             s.erase(pos, m.size());
         }
     }
-    return s;
+    // Katakana input modes (q / C-q) surface the midashigo as katakana, but
+    // the reading mozc and the SKK dict expect is hiragana. Normalise so
+    // conversion behaves the same as in hiragana mode.
+    return katakanaToHiragana(s);
 }
 
 } // namespace skk_mozc
