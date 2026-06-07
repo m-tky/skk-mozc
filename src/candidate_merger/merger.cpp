@@ -34,6 +34,7 @@ std::vector<MergedCandidate> mergeCandidates(const MergeInputs &inputs) {
         MergedCandidate m;
         m.value = c.value;
         m.annotation = c.annotation;
+        m.reading = c.reading;
         m.rank_hint = rank++;
         pushUnique(out, seen, std::move(m));
     }
@@ -45,6 +46,7 @@ std::vector<MergedCandidate> mergeCandidates(const MergeInputs &inputs) {
         MergedCandidate m;
         m.value = mc.value;
         m.annotation = mc.description;
+        m.reading = mc.reading;
         m.rank_hint = rank++;
         if (seen.count(m.value)) {
             ++mozc_taken;
@@ -79,6 +81,7 @@ std::vector<MergedCandidate> mergeCandidates(const MergeInputs &inputs) {
                 MergedCandidate m;
                 m.value = mc.value;
                 m.annotation = mc.description;
+                m.reading = mc.reading;
                 m.rank_hint = rank++;
                 out.push_back(std::move(m));
                 seen.insert(out.back().value);
@@ -90,6 +93,7 @@ std::vector<MergedCandidate> mergeCandidates(const MergeInputs &inputs) {
                 MergedCandidate m;
                 m.value = c->value;
                 m.annotation = c->annotation;
+                m.reading = c->reading;
                 m.rank_hint = rank++;
                 out.push_back(std::move(m));
                 seen.insert(out.back().value);

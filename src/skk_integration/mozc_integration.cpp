@@ -22,6 +22,7 @@
 #include <libskk/libskk.h>
 
 #include <array>
+#include <cctype>
 #include <cstdlib>
 #include <exception>
 #include <functional>
@@ -106,6 +107,125 @@ int utf8Chars(const std::string &s) {
 // libskk-talking part can be unit-tested independently.
 using ::skk_mozc::libskkCurrentYomi;
 
+// Convert a hiragana string to the romaji sequence that libskk's default
+// rom-kana rule will fold BACK into that hiragana when typed in hiragana mode.
+// Used to re-inject the remainder yomi after a partial Mozc commit:
+//   user picks 「右」 out of ▽みぎはし's mozc panel → remainder is 「はし」 →
+//   we feed "Hashi" so libskk lands in ▽はし mode and the user can SPC again.
+//
+// `start_henkan` capitalises the first romaji letter so SKK enters ▽ mode on
+// the first kana (uppercase letter == start-preedit + that kana in default
+// keymap). When false we just emit lowercase romaji.
+//
+// Combined kana (きゃ etc.) are matched as a 2-codepoint window first; the
+// fallback for an isolated small kana is the x-prefix form ("xa" / "xya"
+// /etc.) which the default table also recognises.
+std::string kanaToRomajiForLibskk(const std::string &kana, bool start_henkan) {
+    struct Pair { const char *kana; const char *romaji; };
+    // Two-codepoint combos first. Listed in the same order as libskk's
+    // default rom-kana table so the produced romaji is exactly what that
+    // table maps back. Only combos that the table accepts as a single token
+    // are listed; anything missing falls back to per-codepoint encoding.
+    static const Pair kCombos[] = {
+        {"きゃ","kya"}, {"きゅ","kyu"}, {"きょ","kyo"},
+        {"ぎゃ","gya"}, {"ぎゅ","gyu"}, {"ぎょ","gyo"},
+        {"しゃ","sha"}, {"しゅ","shu"}, {"しょ","sho"},
+        {"じゃ","ja"},  {"じゅ","ju"},  {"じょ","jo"},
+        {"ちゃ","cha"}, {"ちゅ","chu"}, {"ちょ","cho"},
+        {"にゃ","nya"}, {"にゅ","nyu"}, {"にょ","nyo"},
+        {"ひゃ","hya"}, {"ひゅ","hyu"}, {"ひょ","hyo"},
+        {"びゃ","bya"}, {"びゅ","byu"}, {"びょ","byo"},
+        {"ぴゃ","pya"}, {"ぴゅ","pyu"}, {"ぴょ","pyo"},
+        {"みゃ","mya"}, {"みゅ","myu"}, {"みょ","myo"},
+        {"りゃ","rya"}, {"りゅ","ryu"}, {"りょ","ryo"},
+        {"ふぁ","fa"},  {"ふぃ","fi"},  {"ふぇ","fe"},  {"ふぉ","fo"},
+    };
+    static const Pair kSingles[] = {
+        {"あ","a"},  {"い","i"},  {"う","u"},  {"え","e"},  {"お","o"},
+        {"か","ka"}, {"き","ki"}, {"く","ku"}, {"け","ke"}, {"こ","ko"},
+        {"が","ga"}, {"ぎ","gi"}, {"ぐ","gu"}, {"げ","ge"}, {"ご","go"},
+        {"さ","sa"}, {"し","shi"},{"す","su"}, {"せ","se"}, {"そ","so"},
+        {"ざ","za"}, {"じ","ji"}, {"ず","zu"}, {"ぜ","ze"}, {"ぞ","zo"},
+        {"た","ta"}, {"ち","chi"},{"つ","tsu"},{"て","te"}, {"と","to"},
+        {"だ","da"}, {"ぢ","di"}, {"づ","du"}, {"で","de"}, {"ど","do"},
+        {"な","na"}, {"に","ni"}, {"ぬ","nu"}, {"ね","ne"}, {"の","no"},
+        {"は","ha"}, {"ひ","hi"}, {"ふ","fu"}, {"へ","he"}, {"ほ","ho"},
+        {"ば","ba"}, {"び","bi"}, {"ぶ","bu"}, {"べ","be"}, {"ぼ","bo"},
+        {"ぱ","pa"}, {"ぴ","pi"}, {"ぷ","pu"}, {"ぺ","pe"}, {"ぽ","po"},
+        {"ま","ma"}, {"み","mi"}, {"む","mu"}, {"め","me"}, {"も","mo"},
+        {"や","ya"}, {"ゆ","yu"}, {"よ","yo"},
+        {"ら","ra"}, {"り","ri"}, {"る","ru"}, {"れ","re"}, {"ろ","ro"},
+        {"わ","wa"}, {"を","wo"}, {"ん","nn"},
+        {"ぁ","xa"}, {"ぃ","xi"}, {"ぅ","xu"}, {"ぇ","xe"}, {"ぉ","xo"},
+        {"ゃ","xya"},{"ゅ","xyu"},{"ょ","xyo"},
+        {"っ","xtu"},{"ー","-"},
+    };
+
+    auto utf8CharLen = [](unsigned char c) -> size_t {
+        if ((c & 0x80) == 0)        return 1;
+        if ((c & 0xE0) == 0xC0)     return 2;
+        if ((c & 0xF0) == 0xE0)     return 3;
+        if ((c & 0xF8) == 0xF0)     return 4;
+        return 1;
+    };
+
+    std::string out;
+    out.reserve(kana.size() * 2);
+    bool first = true;
+    size_t i = 0;
+    while (i < kana.size()) {
+        size_t len1 = utf8CharLen(static_cast<unsigned char>(kana[i]));
+        if (i + len1 > kana.size()) break;
+        std::string ch1 = kana.substr(i, len1);
+
+        const char *romaji = nullptr;
+        size_t step = 0;
+        if (i + len1 < kana.size()) {
+            size_t len2 = utf8CharLen(
+                static_cast<unsigned char>(kana[i + len1]));
+            if (i + len1 + len2 <= kana.size()) {
+                std::string pair = ch1 + kana.substr(i + len1, len2);
+                for (const auto &p : kCombos) {
+                    if (pair == p.kana) {
+                        romaji = p.romaji;
+                        step = len1 + len2;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!romaji) {
+            for (const auto &p : kSingles) {
+                if (ch1 == p.kana) {
+                    romaji = p.romaji;
+                    step = len1;
+                    break;
+                }
+            }
+        }
+        if (!romaji) {
+            // Unknown character (e.g. mid-romaji garbage, latin, punct). Pass
+            // it through verbatim and hope libskk does something reasonable.
+            out += ch1;
+            i += len1;
+            first = false;
+            continue;
+        }
+        if (first && start_henkan) {
+            // Uppercase first letter == start-preedit trigger in libskk's
+            // default hiragana keymap.
+            out += static_cast<char>(std::toupper(
+                static_cast<unsigned char>(romaji[0])));
+            out += romaji + 1;
+        } else {
+            out += romaji;
+        }
+        first = false;
+        i += step;
+    }
+    return out;
+}
+
 } // namespace
 
 struct MozcIntegration::Impl {
@@ -124,6 +244,15 @@ struct MozcIntegration::Impl {
     // handlePanelKey. Cleared on commit, ESC, or any non-handled key.
     bool panel_active = false;
     std::string panel_yomi;
+
+    // Set true by a candidate's select() callback when it has already taken
+    // care of libskk's preedit state — specifically, when a partial Mozc
+    // candidate (one whose reading is a prefix of panel_yomi) commits its
+    // surface AND re-feeds the remainder yomi back into libskk as ▽<rest>.
+    // handlePanelKey_ checks this AFTER select() returns and passes
+    // reset_libskk=false to clearMozcPanel, so the ▽<rest> we just typed
+    // back in survives.
+    bool skip_libskk_reset_on_panel_clear = false;
 };
 
 MozcIntegration::MozcIntegration(SkkContext *libskk_context,
@@ -314,14 +443,24 @@ void installMergedPanel(MozcIntegration::Impl *impl,
     for (const auto &c : merged) {
         std::string text = c.value;
         std::string desc = c.annotation;
+        // Reading the candidate covers. For Mozc per-segment candidates this
+        // is the SEGMENT's reading (e.g. 「みぎ」 out of panel yomi
+        // 「みぎはし」), which is what triggers the partial-commit re-injection
+        // below.
+        std::string cand_reading =
+            c.reading.empty() ? yomi : c.reading;
         auto *self = impl;
-        auto cb = [self, text, yomi, segments, segments_concat]
+        auto cb = [self, text, cand_reading, yomi, segments, segments_concat]
                   (fcitx::InputContext *ictx) {
-            SKK_MOZC_LOG("panel: commit \"%s\" for yomi=\"%s\"",
-                         text.c_str(), yomi.c_str());
+            SKK_MOZC_LOG(
+                "panel: commit \"%s\" reading=\"%s\" panel_yomi=\"%s\"",
+                text.c_str(), cand_reading.c_str(), yomi.c_str());
             ictx->commitString(text);
-            // Always learn the full (yomi, text) pair.
-            learnIntoUserDict(self, yomi, text);
+            // Learn (candidate's actual reading, text) — not (panel_yomi,
+            // text). For a partial candidate like 「右」 picked out of
+            // 「みぎはし」, the meaningful pair is (「みぎ」, 「右」). The old
+            // code learned (「みぎはし」, 「右」) which is plainly wrong.
+            learnIntoUserDict(self, cand_reading, text);
             // If the user picked the full-sentence candidate (whose value
             // matches the mozc preedit's segment concatenation), also learn
             // each bunsetsu independently. This way next time the user
@@ -335,6 +474,37 @@ void installMergedPanel(MozcIntegration::Impl *impl,
                 }
                 SKK_MOZC_LOG("panel: also learned %zu segments",
                              segments.size());
+            }
+
+            // Partial-commit handling: when the chosen candidate's reading is
+            // a strict prefix of the panel yomi (Mozc per-segment candidate
+            // like 「右」 with reading「みぎ」 from panel yomi「みぎはし」), the
+            // user expects the REMAINDER (「はし」) to stay live so they can
+            // hit SPC again and pick e.g. 「端」.
+            //
+            // We translate the remainder back into romaji and feed it through
+            // libskk so it lands in ▽<remainder> mode. clearMozcPanel is
+            // about to be called by handlePanelKey_ — we set the skip flag
+            // so that call does NOT wipe libskk's freshly-injected preedit.
+            if (cand_reading.size() < yomi.size() &&
+                yomi.compare(0, cand_reading.size(), cand_reading) == 0 &&
+                self->libskk_ctx) {
+                std::string remainder = yomi.substr(cand_reading.size());
+                std::string romaji =
+                    kanaToRomajiForLibskk(remainder, /*start_henkan=*/true);
+                SKK_MOZC_LOG(
+                    "panel: partial commit — remainder yomi=\"%s\" → "
+                    "feeding \"%s\" back into libskk",
+                    remainder.c_str(), romaji.c_str());
+                // Wipe libskk's stale ▽<panel_yomi> preedit. We can't use
+                // full_reset here because it clears OUR panel too; go
+                // straight to skk_context_reset.
+                skk_context_reset(self->libskk_ctx);
+                if (!romaji.empty()) {
+                    skk_context_process_key_events(
+                        self->libskk_ctx, romaji.c_str());
+                }
+                self->skip_libskk_reset_on_panel_clear = true;
             }
             // NOTE: do NOT call clearMozcPanel(self, ictx, ...) from here.
             // We are executing inside CallbackCandidateWord::select, which
@@ -541,6 +711,7 @@ lookupSkkCandidates(MozcIntegration::Impl *impl, const std::string &yomi) {
             sc.annotation = ann ? ann : "";
             sc.from_personal_dict =
                 (impl->user_dict != nullptr && dict == impl->user_dict);
+            sc.reading = yomi; // libskk hits always cover the full yomi
             if (!sc.value.empty()) {
                 out.push_back(std::move(sc));
             }
@@ -733,6 +904,17 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
                  static_cast<int>(decision.action), decision.page_index);
 
     using A = skk_mozc::dispatch::PanelAction;
+    // The candidate's select() callback may need to leave libskk in a
+    // freshly-injected ▽<remainder> state (partial Mozc commit path). It
+    // signals this via impl_->skip_libskk_reset_on_panel_clear. We snapshot
+    // the flag AFTER select() returns and pass its negation to
+    // clearMozcPanel — and we always clear the flag here so each press
+    // starts clean.
+    auto teardown_after_select = [&]() {
+        bool reset = !impl_->skip_libskk_reset_on_panel_clear;
+        impl_->skip_libskk_reset_on_panel_clear = false;
+        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/reset);
+    };
     auto refresh_ui = [&]() {
         // Updating the inline preedit on every navigation crashed fcitx5
         // with 'CommonCandidateList: invalid index' near page boundaries
@@ -766,7 +948,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         if (idx >= 0 && idx < list->totalSize()) {
             list->candidateFromAll(idx).select(ic);
         }
-        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
+        teardown_after_select();
         keyEvent.filterAndAccept();
         return true;
     }
@@ -776,7 +958,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         if (idx >= 0 && idx < list->totalSize()) {
             list->candidateFromAll(idx).select(ic);
         }
-        clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
+        teardown_after_select();
         keyEvent.filterAndAccept();
         return true;
     }
@@ -788,7 +970,7 @@ bool MozcIntegration::handlePanelKey_(fcitx::KeyEvent &keyEvent,
         int idx = list->globalCursorIndex();
         if (idx >= 0 && idx < list->totalSize()) {
             list->candidateFromAll(idx).select(ic);
-            clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/true);
+            teardown_after_select();
         } else {
             clearMozcPanel(impl_.get(), ic, /*reset_libskk=*/false);
         }

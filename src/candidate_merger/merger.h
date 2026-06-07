@@ -30,11 +30,20 @@ struct SkkSideCandidate {
     std::string value;        // surface form, UTF-8
     std::string annotation;   // optional ;-prefixed annotation, no leading ';'
     bool from_personal_dict;  // true => slot 1 priority
+    // Reading the candidate covers. For SKK lookups this is always the full
+    // panel yomi (libskk only returns hits for the exact key we asked for).
+    std::string reading;
 };
 
 struct MergedCandidate {
     std::string value;
     std::string annotation;
+    // Reading the candidate's surface form covers. Mozc per-segment
+    // candidates (e.g. 「右」 picked out of 「みぎはし」's segment 0) carry
+    // ONLY that segment's reading (「みぎ」), which is shorter than the
+    // panel yomi (「みぎはし」). The integration uses this to detect a
+    // partial commit and re-inject the remainder yomi into libskk's ▽ mode.
+    std::string reading;
     // Combined ranking signal for diagnostic logging only; the merger emits
     // candidates already in display order.
     int32_t rank_hint = 0;
