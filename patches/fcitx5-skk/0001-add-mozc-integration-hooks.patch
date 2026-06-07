@@ -68,7 +68,7 @@ index 5a84eaa..2976a0b 100644
  set_target_properties(skk PROPERTIES PREFIX "")
  install(TARGETS skk DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
 diff --git a/src/skk.cpp b/src/skk.cpp
-index 19b564b..27d5405 100644
+index 19b564b..115860c 100644
 --- a/src/skk.cpp
 +++ b/src/skk.cpp
 @@ -48,6 +48,7 @@
@@ -192,6 +192,19 @@ index 19b564b..27d5405 100644
  
      ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
  }
+@@ -783,7 +848,11 @@ void SkkState::applyConfig() {
+                                       *config.nTriggersToShowCandWin);
+     skk_candidate_list_set_page_size(skkCandidates, *config.pageSize);
+     skk_context_set_period_style(context(), *config.punctuationStyle);
+-    skk_context_set_egg_like_newline(context(), *config.eggLikeNewLine);
++    // Force egg-like-newline: without this libskk's `commit-unhandled` for
++    // "\n" passes the Enter through to the application as a literal newline
++    // after committing — the "▽あい → 愛 + 改行" user report. Skk-mozc users
++    // get commit-only semantics regardless of the SKK config value.
++    skk_context_set_egg_like_newline(context(), static_cast<gboolean>(TRUE));
+     skk_context_set_typing_rule(context(), engine_->userRule());
+ 
+     std::vector<SkkDict *> dicts;
 diff --git a/src/skk.h b/src/skk.h
 index ff5d874..086818b 100644
 --- a/src/skk.h

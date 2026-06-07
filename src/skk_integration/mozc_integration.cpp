@@ -268,6 +268,10 @@ MozcIntegration::MozcIntegration(SkkContext *libskk_context,
         options.max_mozc_candidates,
         options.mozc_server_path.empty() ? "(default)"
                                          : options.mozc_server_path.c_str());
+    // (Egg-like-newline is forced to true in the patched SkkState::applyConfig
+    // — see patches/fcitx5-skk/0001-add-mozc-integration-hooks.patch. Doing
+    // it from this constructor would be overridden, because applyConfig is
+    // invoked from SkkEngine::factory AFTER our SkkState ctor returns.)
     if (options.mozc_enabled) {
         MozcClientOptions co;
         co.timeout = std::chrono::milliseconds(options.ipc_timeout_ms);
@@ -821,7 +825,11 @@ skk_mozc::dispatch::PanelKey classifyPanelKey(
     }
     if (k.check(FcitxKey_Escape))                      return PK::Escape;
     if (k.check(FcitxKey_g, fcitx::KeyState::Ctrl))    return PK::CtrlG;
-    if (k.check(FcitxKey_Return))                      return PK::Enter;
+    // Return AND KP_Enter — without KP_Enter, numpad-Enter fell through to
+    // PK::Other → SoftAbort → libskk's `commit-unhandled` for "\n" → commit
+    // + newline reached the application.
+    if (k.check(FcitxKey_Return) || k.check(FcitxKey_KP_Enter))
+        return PK::Enter;
     // Refinement-only keys must come BEFORE plain Space/Down/Up so the
     // modifier check has a chance to match.
     if (k.check(FcitxKey_Left, fcitx::KeyState::Shift))
