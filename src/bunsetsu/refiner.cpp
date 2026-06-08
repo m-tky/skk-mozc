@@ -5,26 +5,13 @@
 
 #include "refiner.h"
 
+#include "../util/utf8.h"
+
 #include <algorithm>
 
 namespace skk_mozc {
 
 namespace {
-
-int utf8CharLen(const std::string &s) {
-    int n = 0;
-    for (size_t i = 0; i < s.size();) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t step = 1;
-        if ((c & 0x80) == 0)        step = 1;
-        else if ((c & 0xE0) == 0xC0) step = 2;
-        else if ((c & 0xF0) == 0xE0) step = 3;
-        else if ((c & 0xF8) == 0xF0) step = 4;
-        i += step;
-        ++n;
-    }
-    return n;
-}
 
 int focusedSegmentIndex(const MozcConversionResult &state) {
     // mozc reports the highlighted bunsetsu directly; fall back to 0 if not
@@ -96,7 +83,7 @@ RefinerView Refiner::view() const {
                       seg.focused_index, 0,
                       static_cast<int>(seg.candidates.size()) - 1)]
                       .value;
-        int len_chars = utf8CharLen(value);
+        int len_chars = utf8::countChars(value);
         if (i == focused) {
             v.focused_begin_chars = cursor;
             v.focused_end_chars = cursor + len_chars;

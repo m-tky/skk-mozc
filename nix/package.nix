@@ -59,6 +59,7 @@ stdenv.mkDerivation (finalAttrs: {
     cp -r ${skkMozcSources}/log              src/log
     cp -r ${skkMozcSources}/panel_dispatch   src/panel_dispatch
     cp -r ${skkMozcSources}/skk_integration  src/skk_integration
+    cp -r ${skkMozcSources}/util             src/util
 
     mkdir -p src/proto/protocol src/proto/ipc
     cp ${mozc-src}/src/protocol/*.proto src/proto/protocol/

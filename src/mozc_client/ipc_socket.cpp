@@ -4,6 +4,7 @@
  */
 
 #include "ipc_socket.h"
+#include "../util/xdg.h"
 #include "ipc/ipc.pb.h"
 
 #include <array>
@@ -33,14 +34,6 @@ using clock_t = std::chrono::steady_clock;
 bool fileExists(const std::string &path) {
     std::error_code ec;
     return fs::exists(path, ec);
-}
-
-std::string xdgConfigHome() {
-    if (const char *r = std::getenv("XDG_CONFIG_HOME"); r && *r) return r;
-    if (const char *h = std::getenv("HOME"); h && *h) {
-        return std::string(h) + "/.config";
-    }
-    return "/tmp";
 }
 
 // Construct the abstract UNIX socket address mozc_server listens on, given
@@ -151,7 +144,8 @@ readUntilEof(int fd, const clock_t::time_point &deadline) {
 
 std::vector<uint8_t> resolveSocketAddress(const std::string &override_path) {
     std::string path = override_path.empty()
-                           ? xdgConfigHome() + "/mozc/.session.ipc"
+                           ? util::xdgDir("XDG_CONFIG_HOME", "/.config") +
+                                 "/mozc/.session.ipc"
                            : override_path;
     if (!fileExists(path)) {
         return {};

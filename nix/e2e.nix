@@ -37,6 +37,7 @@ stdenv.mkDerivation {
   postPatch = ''
     cp -r ${skkMozcSources}/panel_dispatch  panel_dispatch
     cp -r ${skkMozcSources}/skk_integration skk_integration
+    cp -r ${skkMozcSources}/util            util
   '';
 
   cmakeFlags = [

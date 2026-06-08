@@ -5,6 +5,8 @@
 
 #include "yomi_extract.h"
 
+#include "../util/utf8.h"
+
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -13,44 +15,6 @@
 namespace skk_mozc {
 
 namespace {
-
-// Decode the UTF-8 codepoint starting at s[i], advancing i past it. Returns 0
-// (and advances by 1) on a malformed lead byte so the caller can pass it
-// through verbatim without looping forever.
-uint32_t decodeUtf8(const std::string &s, size_t &i) {
-    unsigned char c = static_cast<unsigned char>(s[i]);
-    uint32_t cp;
-    size_t len;
-    if ((c & 0x80) == 0)        { cp = c;        len = 1; }
-    else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
-    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
-    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
-    else { i += 1; return 0; }
-    if (i + len > s.size()) { i = s.size(); return 0; }
-    for (size_t k = 1; k < len; ++k) {
-        cp = (cp << 6) | (static_cast<unsigned char>(s[i + k]) & 0x3F);
-    }
-    i += len;
-    return cp;
-}
-
-void encodeUtf8(uint32_t cp, std::string &out) {
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-}
 
 // Normalise a katakana yomi to hiragana so mozc / the SKK dict (both
 // hiragana-keyed) see the reading SKK itself would look up. SKK's katakana
@@ -102,7 +66,7 @@ std::string katakanaToHiragana(const std::string &s) {
     size_t i = 0;
     while (i < s.size()) {
         size_t start = i;
-        uint32_t cp = decodeUtf8(s, i);
+        uint32_t cp = utf8::decode(s, i);
         if (cp == 0) {
             // Malformed lead byte: copy the single byte through.
             out += s[start];
@@ -110,7 +74,7 @@ std::string katakanaToHiragana(const std::string &s) {
         }
         // Full-width katakana → hiragana.
         if (cp >= 0x30A1 && cp <= 0x30F6) {
-            encodeUtf8(cp - 0x60, out);
+            utf8::encode(cp - 0x60, out);
             continue;
         }
         // Half-width katakana.
@@ -118,19 +82,19 @@ std::string katakanaToHiragana(const std::string &s) {
             uint32_t h = kHalfBase[cp - 0xFF66];
             // Fold a trailing half-width dakuten / handakuten into the kana.
             size_t peek = i;
-            uint32_t mark = peek < s.size() ? decodeUtf8(s, peek) : 0;
+            uint32_t mark = peek < s.size() ? utf8::decode(s, peek) : 0;
             if (mark == 0xFF9E) { // ゙ dakuten
                 if (h == 0x3046) { h = 0x3094; i = peek; } // ヴ → ゔ
                 else if (canVoicePlusOne(h)) { h += 1; i = peek; }
             } else if (mark == 0xFF9F) { // ゚ handakuten
                 if (canHandakuten(h)) { h += 2; i = peek; }
             }
-            encodeUtf8(h, out);
+            utf8::encode(h, out);
             continue;
         }
         // Everything else (already hiragana, ー, ・, punctuation) passes
         // through unchanged.
-        encodeUtf8(cp, out);
+        utf8::encode(cp, out);
     }
     return out;
 }

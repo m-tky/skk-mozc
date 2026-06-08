@@ -5,6 +5,8 @@
 
 #include "log.h"
 
+#include "../util/xdg.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
@@ -26,17 +28,9 @@ std::atomic<bool> g_enabled{false};
 std::mutex g_mu;
 FILE *g_fp = nullptr;
 
-std::string xdgCacheHome() {
-    if (const char *r = std::getenv("XDG_CACHE_HOME"); r && *r) return r;
-    if (const char *h = std::getenv("HOME"); h && *h) {
-        return std::string(h) + "/.cache";
-    }
-    return "/tmp";
-}
-
 FILE *ensureOpen() {
     if (g_fp) return g_fp;
-    std::string dir = xdgCacheHome() + "/skk-mozc";
+    std::string dir = util::xdgDir("XDG_CACHE_HOME", "/.cache") + "/skk-mozc";
     std::error_code ec;
     fs::create_directories(dir, ec);
     std::string path = dir + "/log";

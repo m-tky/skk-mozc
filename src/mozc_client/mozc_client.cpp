@@ -23,6 +23,7 @@
 #include "mozc_client.h"
 #include "ipc_socket.h"
 #include "../log/log.h"
+#include "../util/utf8.h"
 #include "protocol/commands.pb.h"
 
 #include <chrono>
@@ -107,25 +108,31 @@ struct MozcClient::Impl {
         }
         return out;
     }
+
+    // Tear down session `id` (no-op if 0). DELETE_SESSION is the only call
+    // that frees mozc-side session state; every teardown path funnels here.
+    void deleteSession(uint64_t id, std::chrono::milliseconds timeout) {
+        if (id == 0) return;
+        mc::Input in;
+        in.set_type(mc::Input::DELETE_SESSION);
+        in.set_id(id);
+        (void)call(in, timeout);
+    }
+
+    // Wipe session `id`'s conversion context (no-op if 0). Issued before every
+    // teardown so mozc never snapshots an abandoned conversion into its
+    // user_history — the project's "no mozc learning" invariant.
+    void resetContext(uint64_t id, std::chrono::milliseconds timeout) {
+        if (id == 0) return;
+        mc::Input in;
+        in.set_type(mc::Input::SEND_COMMAND);
+        in.set_id(id);
+        in.mutable_command()->set_type(mc::SessionCommand::RESET_CONTEXT);
+        (void)call(in, timeout);
+    }
 };
 
 namespace {
-
-// Iterate UTF-8 characters of a string, invoking `f(char_view)` for each.
-template <typename F>
-void forEachUtf8Char(const std::string &s, F &&f) {
-    for (size_t i = 0; i < s.size();) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t step = 1;
-        if ((c & 0x80) == 0)        step = 1;
-        else if ((c & 0xE0) == 0xC0) step = 2;
-        else if ((c & 0xF0) == 0xE0) step = 3;
-        else if ((c & 0xF8) == 0xF0) step = 4;
-        if (i + step > s.size()) break;
-        f(std::string_view(s).substr(i, step));
-        i += step;
-    }
-}
 
 MozcCandidate fromCandidateWord(const mc::CandidateWord &cw,
                                 const std::string &yomi) {
@@ -253,132 +260,17 @@ bool ensureServerReachable(MozcClient::Impl &impl,
     return false;
 }
 
-} // namespace
-
-MozcClient::MozcClient(MozcClientOptions options)
-    : impl_(new Impl()), options_(std::move(options)) {
-    impl_->socket_address =
-        ipc::resolveSocketAddress(options_.socket_path_override);
-}
-
-MozcClient::~MozcClient() {
-    if (impl_) {
-        if (impl_->session_id != 0) {
-            mc::Input in;
-            in.set_type(mc::Input::DELETE_SESSION);
-            in.set_id(impl_->session_id);
-            (void)impl_->call(in, options_.timeout);
-        }
-        delete impl_;
-    }
-}
-
-void MozcClient::resetContext() {
-    if (impl_->session_id == 0) return;
-    mc::Input in;
-    in.set_type(mc::Input::SEND_COMMAND);
-    in.set_id(impl_->session_id);
-    in.mutable_command()->set_type(mc::SessionCommand::RESET_CONTEXT);
-    (void)impl_->call(in, options_.timeout);
-}
-
-std::optional<MozcConversionResult>
-MozcClient::convert(const std::string &yomi) {
-    if (yomi.empty()) {
-        return std::nullopt;
-    }
-    if (!reachable_) {
-        auto since = std::chrono::steady_clock::now() - last_unreachable_at_;
-        if (since < unreachable_cooldown_) {
-            // Still cooling down — short-circuit so we don't pay the probe
-            // cost on every keystroke while mozc_server is down.
-            return std::nullopt;
-        }
-        // Cooldown elapsed: optimistically clear the flag and retry the
-        // probe below. If it fails again the cooldown restarts.
-        SKK_MOZC_LOG("convert: cooldown elapsed, re-probing mozc_server");
-        reachable_ = true;
-    }
-    SKK_MOZC_LOG("convert: yomi=\"%s\"", yomi.c_str());
-    // Cache lookup is intentionally BEFORE the probe: a fresh cached answer
-    // can be served even when mozc_server is currently unreachable, so a
-    // transient server restart doesn't make recently-typed yomi disappear.
-    if (auto cached = impl_->cacheGet(yomi, options_.cache_ttl)) {
-        SKK_MOZC_LOG("convert: cache HIT for yomi=\"%s\"", yomi.c_str());
-        return cached;
-    }
-    if (!ensureServerReachable(*impl_, options_)) {
-        reachable_ = false;
-        last_unreachable_at_ = std::chrono::steady_clock::now();
-        return std::nullopt;
-    }
-
-    mc::Input create;
-    create.set_type(mc::Input::CREATE_SESSION);
-    auto create_out = impl_->call(create, options_.timeout);
-    if (!create_out || !create_out->has_id()) {
-        return std::nullopt;
-    }
-    impl_->session_id = create_out->id();
-
-    // Feed each kana character via SEND_KEY {key_string: ...}. Mozc treats
-    // key_string as direct character insertion into the composition buffer.
-    bool feed_ok = true;
-    forEachUtf8Char(yomi, [&](std::string_view ch) {
-        if (!feed_ok) return;
-        mc::Input k;
-        k.set_type(mc::Input::SEND_KEY);
-        k.set_id(impl_->session_id);
-        k.mutable_key()->set_key_string(std::string(ch));
-        if (!impl_->call(k, options_.timeout)) feed_ok = false;
-    });
-    if (!feed_ok) {
-        impl_->session_id = 0;
-        return std::nullopt;
-    }
-
-    // SPACE triggers conversion in mozc's session state machine.
-    mc::Input spc;
-    spc.set_type(mc::Input::SEND_KEY);
-    spc.set_id(impl_->session_id);
-    spc.mutable_key()->set_special_key(mc::KeyEvent::SPACE);
-    auto convert_out = impl_->call(spc, options_.timeout);
-    if (!convert_out) {
-        impl_->session_id = 0;
-        return std::nullopt;
-    }
-
-    MozcConversionResult result = outputToResult(
-        *convert_out, yomi, options_.max_candidates);
-
-    resetContext();
-    {
-        mc::Input del;
-        del.set_type(mc::Input::DELETE_SESSION);
-        del.set_id(impl_->session_id);
-        (void)impl_->call(del, options_.timeout);
-    }
-    impl_->session_id = 0;
-
-    if (result.top_candidates.empty() && result.segments.empty()) {
-        return std::nullopt;
-    }
-    impl_->cachePut(yomi, result, options_.cache_capacity);
-    return result;
-}
-
-namespace {
-
-// Feed yomi into a live session and trigger conversion. Returns the
-// post-conversion Output, or std::nullopt on IPC failure. The session is
-// LEFT OPEN — caller owns it.
+// Feed yomi into an open session and trigger conversion (SPACE). Returns the
+// post-conversion Output, or std::nullopt on IPC failure. The session is LEFT
+// OPEN — the caller owns its teardown. Shared by the one-shot convert() and
+// the refinement-session bootstrap.
 std::optional<mc::Output>
 feedYomiAndConvert(MozcClient::Impl &impl,
                    uint64_t session_id,
                    const std::string &yomi,
                    std::chrono::milliseconds timeout) {
     bool ok = true;
-    forEachUtf8Char(yomi, [&](std::string_view ch) {
+    skk_mozc::utf8::forEachChar(yomi, [&](std::string_view ch) {
         if (!ok) return;
         mc::Input k;
         k.set_type(mc::Input::SEND_KEY);
@@ -396,19 +288,95 @@ feedYomiAndConvert(MozcClient::Impl &impl,
 
 } // namespace
 
+MozcClient::MozcClient(MozcClientOptions options)
+    : impl_(new Impl()), options_(std::move(options)) {
+    impl_->socket_address =
+        ipc::resolveSocketAddress(options_.socket_path_override);
+}
+
+MozcClient::~MozcClient() {
+    if (impl_) {
+        impl_->deleteSession(impl_->session_id, options_.timeout);
+        delete impl_;
+    }
+}
+
+void MozcClient::resetContext() {
+    impl_->resetContext(impl_->session_id, options_.timeout);
+}
+
+bool MozcClient::reachabilityCoolingDown() {
+    if (reachable_) return false;
+    auto since = std::chrono::steady_clock::now() - last_unreachable_at_;
+    if (since < unreachable_cooldown_) {
+        // Still cooling down — short-circuit so we don't pay the probe cost on
+        // every keystroke while mozc_server is down.
+        return true;
+    }
+    // Cooldown elapsed: optimistically clear the flag so the caller re-probes.
+    // If the probe fails again the cooldown restarts.
+    SKK_MOZC_LOG("cooldown elapsed, re-probing mozc_server");
+    reachable_ = true;
+    return false;
+}
+
+bool MozcClient::probeServerReachable() {
+    if (ensureServerReachable(*impl_, options_)) return true;
+    reachable_ = false;
+    last_unreachable_at_ = std::chrono::steady_clock::now();
+    return false;
+}
+
+std::optional<MozcConversionResult>
+MozcClient::convert(const std::string &yomi) {
+    if (yomi.empty()) {
+        return std::nullopt;
+    }
+    if (reachabilityCoolingDown()) return std::nullopt;
+    SKK_MOZC_LOG("convert: yomi=\"%s\"", yomi.c_str());
+    // Cache lookup is intentionally BEFORE the probe: a fresh cached answer
+    // can be served even when mozc_server is currently unreachable, so a
+    // transient server restart doesn't make recently-typed yomi disappear.
+    if (auto cached = impl_->cacheGet(yomi, options_.cache_ttl)) {
+        SKK_MOZC_LOG("convert: cache HIT for yomi=\"%s\"", yomi.c_str());
+        return cached;
+    }
+    if (!probeServerReachable()) return std::nullopt;
+
+    mc::Input create;
+    create.set_type(mc::Input::CREATE_SESSION);
+    auto create_out = impl_->call(create, options_.timeout);
+    if (!create_out || !create_out->has_id()) {
+        return std::nullopt;
+    }
+    impl_->session_id = create_out->id();
+
+    auto convert_out =
+        feedYomiAndConvert(*impl_, impl_->session_id, yomi, options_.timeout);
+    if (!convert_out) {
+        impl_->session_id = 0;
+        return std::nullopt;
+    }
+
+    MozcConversionResult result = outputToResult(
+        *convert_out, yomi, options_.max_candidates);
+
+    resetContext();
+    impl_->deleteSession(impl_->session_id, options_.timeout);
+    impl_->session_id = 0;
+
+    if (result.top_candidates.empty() && result.segments.empty()) {
+        return std::nullopt;
+    }
+    impl_->cachePut(yomi, result, options_.cache_capacity);
+    return result;
+}
+
 std::unique_ptr<RefinementSession>
 MozcClient::beginRefinement(const std::string &yomi) {
     if (yomi.empty()) return nullptr;
-    if (!reachable_) {
-        auto since = std::chrono::steady_clock::now() - last_unreachable_at_;
-        if (since < unreachable_cooldown_) return nullptr;
-        reachable_ = true;
-    }
-    if (!ensureServerReachable(*impl_, options_)) {
-        reachable_ = false;
-        last_unreachable_at_ = std::chrono::steady_clock::now();
-        return nullptr;
-    }
+    if (reachabilityCoolingDown()) return nullptr;
+    if (!probeServerReachable()) return nullptr;
     mc::Input create;
     create.set_type(mc::Input::CREATE_SESSION);
     auto create_out = impl_->call(create, options_.timeout);
@@ -416,10 +384,7 @@ MozcClient::beginRefinement(const std::string &yomi) {
     uint64_t sid = create_out->id();
     auto first = feedYomiAndConvert(*impl_, sid, yomi, options_.timeout);
     if (!first) {
-        mc::Input del;
-        del.set_type(mc::Input::DELETE_SESSION);
-        del.set_id(sid);
-        (void)impl_->call(del, options_.timeout);
+        impl_->deleteSession(sid, options_.timeout);
         return nullptr;
     }
     auto state = outputToResult(*first, yomi, options_.max_candidates);
@@ -438,19 +403,8 @@ RefinementSession::~RefinementSession() {
     if (dead_ || !impl_) return;
     // RESET_CONTEXT first so mozc doesn't snapshot the abandoned conversion
     // into its user_history, then DELETE_SESSION.
-    {
-        mc::Input rc;
-        rc.set_type(mc::Input::SEND_COMMAND);
-        rc.set_id(session_id_);
-        rc.mutable_command()->set_type(mc::SessionCommand::RESET_CONTEXT);
-        (void)impl_->call(rc, options_.timeout);
-    }
-    {
-        mc::Input del;
-        del.set_type(mc::Input::DELETE_SESSION);
-        del.set_id(session_id_);
-        (void)impl_->call(del, options_.timeout);
-    }
+    impl_->resetContext(session_id_, options_.timeout);
+    impl_->deleteSession(session_id_, options_.timeout);
 }
 
 namespace {

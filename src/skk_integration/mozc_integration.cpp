@@ -10,6 +10,7 @@
 #include "../log/log.h"
 #include "../mozc_client/mozc_client.h"
 #include "../panel_dispatch/panel_dispatch.h"
+#include "../util/utf8.h"
 #include "yomi_extract.h"
 
 #include <fcitx-utils/key.h>
@@ -88,21 +89,6 @@ namespace {
 // queries SKK's own lookup is fine, and mozc would mostly return junk.
 constexpr int kMinYomiCharsForMozc = 2;
 
-int utf8Chars(const std::string &s) {
-    int n = 0;
-    for (size_t i = 0; i < s.size();) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t step = 1;
-        if ((c & 0x80) == 0)        step = 1;
-        else if ((c & 0xE0) == 0xC0) step = 2;
-        else if ((c & 0xF0) == 0xE0) step = 3;
-        else if ((c & 0xF8) == 0xF0) step = 4;
-        i += step;
-        ++n;
-    }
-    return n;
-}
-
 // libskkCurrentYomi has moved to ../skk_integration/yomi_extract.cpp so the
 // libskk-talking part can be unit-tested independently.
 using ::skk_mozc::libskkCurrentYomi;
@@ -161,27 +147,19 @@ std::string kanaToRomajiForLibskk(const std::string &kana, bool start_henkan) {
         {"っ","xtu"},{"ー","-"},
     };
 
-    auto utf8CharLen = [](unsigned char c) -> size_t {
-        if ((c & 0x80) == 0)        return 1;
-        if ((c & 0xE0) == 0xC0)     return 2;
-        if ((c & 0xF0) == 0xE0)     return 3;
-        if ((c & 0xF8) == 0xF0)     return 4;
-        return 1;
-    };
-
     std::string out;
     out.reserve(kana.size() * 2);
     bool first = true;
     size_t i = 0;
     while (i < kana.size()) {
-        size_t len1 = utf8CharLen(static_cast<unsigned char>(kana[i]));
+        size_t len1 = utf8::leadByteLen(static_cast<unsigned char>(kana[i]));
         if (i + len1 > kana.size()) break;
         std::string ch1 = kana.substr(i, len1);
 
         const char *romaji = nullptr;
         size_t step = 0;
         if (i + len1 < kana.size()) {
-            size_t len2 = utf8CharLen(
+            size_t len2 = utf8::leadByteLen(
                 static_cast<unsigned char>(kana[i + len1]));
             if (i + len1 + len2 <= kana.size()) {
                 std::string pair = ch1 + kana.substr(i + len1, len2);
@@ -738,7 +716,7 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
     SKK_MOZC_LOG("SPC: raw libskk preedit=\"%s\"",
                  raw_preedit ? raw_preedit : "(null)");
     std::string yomi = libskkCurrentYomi(impl_->libskk_ctx);
-    if (yomi.empty() || utf8Chars(yomi) < kMinYomiCharsForMozc) {
+    if (yomi.empty() || utf8::countChars(yomi) < kMinYomiCharsForMozc) {
         SKK_MOZC_LOG("SPC: skip — not in ▽ mode or yomi too short");
         return false;
     }

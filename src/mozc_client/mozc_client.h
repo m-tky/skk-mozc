@@ -111,6 +111,16 @@ public:
     const MozcClientOptions &options() const { return options_; }
 
 private:
+    // Cooldown gate shared by convert() and beginRefinement(). Returns true if
+    // mozc_server is currently in its post-failure cooldown window and the
+    // caller should short-circuit. When the cooldown has elapsed it optimist-
+    // ically clears `reachable_` so the caller re-probes.
+    bool reachabilityCoolingDown();
+    // Probe (and lazy-start) mozc_server. On failure, arms the cooldown and
+    // returns false; on success returns true. Shared teardown of the
+    // reachable_/last_unreachable_at_ bookkeeping lives here.
+    bool probeServerReachable();
+
     Impl *impl_;
     MozcClientOptions options_;
     // Tri-state reachability: `reachable_` flips to false on first IPC
