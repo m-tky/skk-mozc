@@ -717,7 +717,7 @@ bool MozcIntegration::maybeOpenMozcPanel_(fcitx::KeyEvent &keyEvent,
                  raw_preedit ? raw_preedit : "(null)");
     std::string yomi = libskkCurrentYomi(impl_->libskk_ctx);
     if (yomi.empty() || utf8::countChars(yomi) < kMinYomiCharsForMozc) {
-        SKK_MOZC_LOG("SPC: skip — not in ▽ mode or yomi too short");
+        SKK_MOZC_LOG("SPC: skip — no mozc-queryable yomi or yomi too short");
         return false;
     }
     if (!yomiIsClean(yomi)) {

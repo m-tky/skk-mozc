@@ -24,15 +24,18 @@
 #include <fcitx-utils/standardpaths.h>
 #include <fcitx-utils/testing.h>
 #include <fcitx/addonmanager.h>
+#include <fcitx/candidatelist.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputmethodmanager.h>
 #include <fcitx/inputmethodgroup.h>
+#include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
 #include <fcitx-module/testfrontend/testfrontend_public.h>
 
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +55,15 @@ void sendKeys(AddonInstance *testfrontend, ICUUID uuid,
     }
 }
 
+std::optional<std::string> focusedCandidateText(InputContext *ic) {
+    auto *raw = ic->inputPanel().candidateList().get();
+    auto *list = dynamic_cast<CommonCandidateList *>(raw);
+    if (!list) return std::nullopt;
+    int idx = list->globalCursorIndex();
+    if (idx < 0 || idx >= list->totalSize()) return std::nullopt;
+    return list->candidateFromAll(idx).text().toString();
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -68,6 +80,9 @@ int main(int argc, char **argv) {
     setupTestingEnvironment(TESTING_BINARY_DIR,
                             {"addons"},
                             {"data"});
+    if (const char *e = std::getenv("SKK_MOZC_E2E_CONFIG_DIR")) {
+        setenv("FCITX_CONFIG_DIR", e, 1);
+    }
     if (const char *e = std::getenv("FCITX_ADDON_DIRS")) {
         std::fprintf(stderr, "[DEBUG] FCITX_ADDON_DIRS=%s\n", e);
     }
@@ -263,10 +278,19 @@ int main(int argc, char **argv) {
             //     navigation (cursor=0), then 'a' commits cand 0 + libskk
             //     turns 'a' into 'あ' and commits that.
             sendKeys(testfrontend, uuid, {"Escape"});
-            testfrontend->call<ITestFrontend::pushCommitExpectation>("朝日");
-            testfrontend->call<ITestFrontend::pushCommitExpectation>("あ");
             sendKeys(testfrontend, uuid,
-                     {"A", "s", "a", "h", "i", "space", "a"});
+                     {"A", "s", "a", "h", "i", "space"});
+            auto middle_candidate = focusedCandidateText(ic);
+            if (!middle_candidate) {
+                std::fprintf(stderr,
+                             "[FAIL] scenario 5a: no focused candidate\n");
+                ++failures;
+            } else {
+                testfrontend->call<ITestFrontend::pushCommitExpectation>(
+                    *middle_candidate);
+            }
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("あ");
+            sendKeys(testfrontend, uuid, {"a"});
             sendKeys(testfrontend, uuid, {"Escape"});
 
             // (b) BOTTOM-cursor case: spam SPC so the cursor stops at
@@ -276,20 +300,7 @@ int main(int argc, char **argv) {
             //     If the user-reported "変な挙動" reproduces here the
             //     pushCommitExpectation queue will fail.
             //
-            //     We don't hard-code the bottom candidate string (it
-            //     depends on mozc dict order at runtime); we just check
-            //     that EXACTLY TWO commits arrive and the second one is
-            //     'あ'. To do that with the only API testfrontend exposes
-            //     (exact-string pushCommitExpectation) we observe the
-            //     bottom string from a previous run and pin it.
-            //
-            //     For "asahi" the bottom of the merged panel (mozc-driven,
-            //     SKK + mozc dedup'd) is "暾" with this dictionary build.
-            //     If the bottom string drifts we'll see a mismatch failure,
-            //     which is the right signal to update this test.
             sendKeys(testfrontend, uuid, {"Escape"});
-            testfrontend->call<ITestFrontend::pushCommitExpectation>("暾");
-            testfrontend->call<ITestFrontend::pushCommitExpectation>("あ");
             sendKeys(testfrontend, uuid, {"A", "s", "a", "h", "i", "space"});
             for (int i = 0; i < 200; ++i) {
                 testfrontend->call<ITestFrontend::keyEvent>(
@@ -297,6 +308,16 @@ int main(int argc, char **argv) {
                 testfrontend->call<ITestFrontend::keyEvent>(
                     uuid, Key("space"), true);
             }
+            auto bottom_candidate = focusedCandidateText(ic);
+            if (!bottom_candidate) {
+                std::fprintf(stderr,
+                             "[FAIL] scenario 5b: no focused candidate\n");
+                ++failures;
+            } else {
+                testfrontend->call<ITestFrontend::pushCommitExpectation>(
+                    *bottom_candidate);
+            }
+            testfrontend->call<ITestFrontend::pushCommitExpectation>("あ");
             testfrontend->call<ITestFrontend::keyEvent>(
                 uuid, Key("a"), false);
             testfrontend->call<ITestFrontend::keyEvent>(

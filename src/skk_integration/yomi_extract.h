@@ -19,9 +19,11 @@ typedef struct _SkkContext SkkContext;
 namespace skk_mozc {
 
 // Returns the live yomi the user is composing in libskk's ▽ mode, with the
-// ▽ marker stripped. Returns an empty string in every other state — ▼
-// (candidate showing), register mode, direct-input mode — because those
-// states do not surface a usable mozc query string.
+// ▽ marker stripped. Okurigana preedit may already be rendered as ▼X*Y【】
+// before our SPC interception; that form is also accepted and normalised to
+// XY so Mozc can act as an extra source for the completed reading. Returns an
+// empty string in other states — ordinary ▼ candidate display, register mode,
+// direct-input mode — because those states do not surface a usable mozc query.
 std::string libskkCurrentYomi(SkkContext *ctx);
 
 } // namespace skk_mozc

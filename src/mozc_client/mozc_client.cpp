@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <list>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 
@@ -133,6 +134,38 @@ struct MozcClient::Impl {
 };
 
 namespace {
+
+using Deadline = std::chrono::steady_clock::time_point;
+
+std::optional<std::chrono::milliseconds>
+remainingBudget(Deadline deadline) {
+    auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) return std::nullopt;
+    auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - now);
+    if (left.count() <= 0) {
+        return std::chrono::milliseconds(1);
+    }
+    return left;
+}
+
+struct SessionTeardown {
+    MozcClient::Impl &impl;
+    uint64_t id = 0;
+    std::chrono::milliseconds timeout;
+    bool active = true;
+
+    ~SessionTeardown() {
+        if (!active || id == 0) return;
+        impl.resetContext(id, timeout);
+        impl.deleteSession(id, timeout);
+        if (impl.session_id == id) {
+            impl.session_id = 0;
+        }
+    }
+
+    void dismiss() { active = false; }
+};
 
 MozcCandidate fromCandidateWord(const mc::CandidateWord &cw,
                                 const std::string &yomi) {
@@ -268,22 +301,29 @@ std::optional<mc::Output>
 feedYomiAndConvert(MozcClient::Impl &impl,
                    uint64_t session_id,
                    const std::string &yomi,
-                   std::chrono::milliseconds timeout) {
+                   Deadline deadline) {
     bool ok = true;
     skk_mozc::utf8::forEachChar(yomi, [&](std::string_view ch) {
         if (!ok) return;
+        auto timeout = remainingBudget(deadline);
+        if (!timeout) {
+            ok = false;
+            return;
+        }
         mc::Input k;
         k.set_type(mc::Input::SEND_KEY);
         k.set_id(session_id);
         k.mutable_key()->set_key_string(std::string(ch));
-        if (!impl.call(k, timeout)) ok = false;
+        if (!impl.call(k, *timeout)) ok = false;
     });
     if (!ok) return std::nullopt;
+    auto timeout = remainingBudget(deadline);
+    if (!timeout) return std::nullopt;
     mc::Input spc;
     spc.set_type(mc::Input::SEND_KEY);
     spc.set_id(session_id);
     spc.mutable_key()->set_special_key(mc::KeyEvent::SPACE);
-    return impl.call(spc, timeout);
+    return impl.call(spc, *timeout);
 }
 
 } // namespace
@@ -296,6 +336,7 @@ MozcClient::MozcClient(MozcClientOptions options)
 
 MozcClient::~MozcClient() {
     if (impl_) {
+        impl_->resetContext(impl_->session_id, options_.timeout);
         impl_->deleteSession(impl_->session_id, options_.timeout);
         delete impl_;
     }
@@ -343,18 +384,21 @@ MozcClient::convert(const std::string &yomi) {
     }
     if (!probeServerReachable()) return std::nullopt;
 
+    auto deadline = std::chrono::steady_clock::now() + options_.timeout;
+    auto timeout = remainingBudget(deadline);
+    if (!timeout) return std::nullopt;
     mc::Input create;
     create.set_type(mc::Input::CREATE_SESSION);
-    auto create_out = impl_->call(create, options_.timeout);
+    auto create_out = impl_->call(create, *timeout);
     if (!create_out || !create_out->has_id()) {
         return std::nullopt;
     }
     impl_->session_id = create_out->id();
+    SessionTeardown teardown{*impl_, impl_->session_id, options_.timeout};
 
     auto convert_out =
-        feedYomiAndConvert(*impl_, impl_->session_id, yomi, options_.timeout);
+        feedYomiAndConvert(*impl_, impl_->session_id, yomi, deadline);
     if (!convert_out) {
-        impl_->session_id = 0;
         return std::nullopt;
     }
 
@@ -363,6 +407,7 @@ MozcClient::convert(const std::string &yomi) {
 
     resetContext();
     impl_->deleteSession(impl_->session_id, options_.timeout);
+    teardown.dismiss();
     impl_->session_id = 0;
 
     if (result.top_candidates.empty() && result.segments.empty()) {
@@ -377,17 +422,21 @@ MozcClient::beginRefinement(const std::string &yomi) {
     if (yomi.empty()) return nullptr;
     if (reachabilityCoolingDown()) return nullptr;
     if (!probeServerReachable()) return nullptr;
+    auto deadline = std::chrono::steady_clock::now() + options_.timeout;
+    auto timeout = remainingBudget(deadline);
+    if (!timeout) return nullptr;
     mc::Input create;
     create.set_type(mc::Input::CREATE_SESSION);
-    auto create_out = impl_->call(create, options_.timeout);
+    auto create_out = impl_->call(create, *timeout);
     if (!create_out || !create_out->has_id()) return nullptr;
     uint64_t sid = create_out->id();
-    auto first = feedYomiAndConvert(*impl_, sid, yomi, options_.timeout);
+    SessionTeardown teardown{*impl_, sid, options_.timeout};
+    auto first = feedYomiAndConvert(*impl_, sid, yomi, deadline);
     if (!first) {
-        impl_->deleteSession(sid, options_.timeout);
         return nullptr;
     }
     auto state = outputToResult(*first, yomi, options_.max_candidates);
+    teardown.dismiss();
     return std::unique_ptr<RefinementSession>(
         new RefinementSession(impl_, sid, options_, std::move(state)));
 }

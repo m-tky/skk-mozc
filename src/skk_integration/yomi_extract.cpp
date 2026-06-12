@@ -106,9 +106,25 @@ std::string libskkCurrentYomi(SkkContext *ctx) {
     const gchar *preedit = skk_context_get_preedit(ctx);
     if (!preedit) return {};
     static const std::string kTriangleDown = "\xe2\x96\xbd"; // ▽ U+25BD
+    static const std::string kTriangleDownFilled = "\xe2\x96\xbc"; // ▼
+    static const std::string kOpenBracket = "\xe3\x80\x90"; // 【
     std::string s = preedit;
-    if (s.rfind(kTriangleDown, 0) != 0) return {};
-    s.erase(0, kTriangleDown.size());
+    bool okuri_candidate_state = false;
+    if (s.rfind(kTriangleDown, 0) == 0) {
+        s.erase(0, kTriangleDown.size());
+    } else if (s.rfind(kTriangleDownFilled, 0) == 0 &&
+               s.find('*') != std::string::npos) {
+        s.erase(0, kTriangleDownFilled.size());
+        okuri_candidate_state = true;
+    } else {
+        return {};
+    }
+    if (okuri_candidate_state) {
+        size_t bracket = s.find(kOpenBracket);
+        if (bracket != std::string::npos) {
+            s.erase(bracket);
+        }
+    }
     // Okurigana mode (▽X*Y, where X is the henkan stem and Y is the
     // okurigana suffix): drop the '*' separator and feed the concatenated
     // kana to mozc. Mozc handles verb / adjective conjugations natively, so

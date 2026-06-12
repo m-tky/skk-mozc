@@ -189,7 +189,9 @@ sendRequest(const std::vector<uint8_t> &socket_address,
 }
 
 bool spawnServer(const std::string &mozc_server_path) {
-    if (mozc_server_path.empty()) return false;
+    std::string program =
+        mozc_server_path.empty() ? std::string("mozc_server")
+                                 : mozc_server_path;
     pid_t pid = ::fork();
     if (pid < 0) return false;
     if (pid == 0) {
@@ -202,11 +204,11 @@ bool spawnServer(const std::string &mozc_server_path) {
             if (devnull > 2) ::close(devnull);
         }
         const char *argv[] = {
-            mozc_server_path.c_str(),
+            program.c_str(),
             "--mode=server",
             nullptr,
         };
-        ::execv(mozc_server_path.c_str(), const_cast<char *const *>(argv));
+        ::execvp(program.c_str(), const_cast<char *const *>(argv));
         ::_exit(127);
     }
     return true;
