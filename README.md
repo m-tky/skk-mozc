@@ -14,7 +14,7 @@ SKK's input philosophy is preserved (explicit conversion boundaries, ▽ / ▼ m
   - `くらうどさーびす` → `クラウドサービス` (loanword compound)
   - `にゅーよーくしゅう` → `ニューヨーク州` (loanword + kanji suffix)
   - `わたしはがくせいです` → `私は学生です` (multi-bunsetsu)
-- Your personal SKK dictionary always wins. Picking a Mozc-only candidate immediately learns it into the SKK user dictionary (libskk's writable dict slot, by default `~/.local/share/fcitx5/skk/user.dict`), so it surfaces at the top on the second use, behaving like any other SKK entry.
+- Your personal SKK dictionary always wins. Picking a Mozc-only candidate immediately learns it into the writable SKK dictionary, so it surfaces at the top on the second use, behaving like any other SKK entry.
 - Mozc-style bunsetsu refinement while a multi-segment candidate is showing:
   - `Shift+←/→` shrink / grow the focused bunsetsu
   - `Tab / Shift+Tab` move focus
@@ -150,16 +150,30 @@ With Home Manager the equivalent options are `programs.fcitx5-skk-mozc.{mozc.ena
 
 ## SKK dictionaries
 
-This addon does not try to manage SKK dictionaries on your behalf — the standard fcitx5-skk dictionary list at `~/.local/share/fcitx5/skk/dictionary_list` keeps working unchanged. Add system dicts there as usual, e.g. via Home Manager:
+When enabled through Home Manager, this module manages
+`~/.local/share/fcitx5/skk/dictionary_list`. It creates an empty
+`~/.local/share/fcitx5/skk/user.dict` only when missing, then registers it as
+the first writable dictionary. Existing learning is never replaced. The
+default read-only dictionary is `SKK-JISYO.L`.
+
+Add extra read-only dictionaries with `extraSkkDictionaries`:
 
 ```nix
-home.file.".local/share/fcitx5/skk/dictionary_list".text = ''
-  file=${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L,mode=readonly,type=file
-  file=${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei,mode=readonly,type=file
-'';
+programs.fcitx5-skk-mozc.extraSkkDictionaries = [
+  "${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei"
+];
 ```
 
-All learning (SKK- or Mozc-sourced) goes into libskk's writable user dictionary slot. If you don't configure one explicitly, fcitx5-skk falls back to `~/.local/share/fcitx5/skk/user.dict`, which is where the bulk of your personal entries live. To pin a specific path, add `file=~/your-dict,mode=readwrite,type=file` to the dictionary list above.
+All learning (SKK- or Mozc-sourced) goes into
+`~/.local/share/fcitx5/skk/user.dict` in this configuration. Do not define
+the same `home.file` entry yourself; use `extraSkkDictionaries` instead.
+
+For a non-Home-Manager setup, ensure your active `dictionary_list` has a
+writable entry before any read-only dictionaries, for example:
+
+```text
+file=/home/you/.local/share/fcitx5/skk/user.dict,mode=readwrite,type=file
+```
 
 ## Development
 

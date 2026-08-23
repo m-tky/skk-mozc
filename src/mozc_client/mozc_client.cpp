@@ -184,8 +184,10 @@ MozcCandidate fromCandidateWord(const mc::CandidateWord &cw,
 // Mozc's `all_candidate_words` is per-segment (the currently focused one),
 // so for multi-bunsetsu input it only shows alternatives for the first
 // bunsetsu. The full-sentence conversion lives in `preedit.segment[].value`.
-// We prepend the concatenated form so SKK users see "私は学生です" instead
-// of just "私は" when they hit SPC on "わたしはがくせいです".
+// It is important not to treat a partial preedit as a full conversion: on an
+// early/incomplete response Mozc may only have converted the first bunsetsu.
+// Marking its surface with the complete yomi would make the panel commit it
+// as the whole input and discard the unconverted suffix.
 std::string concatenatePreedit(const mc::Output &out) {
     if (!out.has_preedit()) return {};
     std::string s;
@@ -195,12 +197,44 @@ std::string concatenatePreedit(const mc::Output &out) {
     return s;
 }
 
+std::string concatenatePreeditKeys(const mc::Output &out) {
+    if (!out.has_preedit()) return {};
+    std::string s;
+    for (int i = 0; i < out.preedit().segment_size(); ++i) {
+        s += out.preedit().segment(i).key();
+    }
+    return s;
+}
+
+bool preeditCoversYomi(const mc::Output &out, const std::string &yomi) {
+    return !yomi.empty() && concatenatePreeditKeys(out) == yomi;
+}
+
+// all_candidate_words describes the currently focused preedit segment. Use
+// that segment's reading when CandidateWord.key is absent, rather than
+// defaulting to the whole yomi. This preserves the unconverted suffix through
+// the panel's existing partial-commit path.
+std::string focusedSegmentReading(const mc::Output &out,
+                                  const std::string &yomi) {
+    if (!out.has_preedit() || out.preedit().segment_size() == 0) return yomi;
+    int index = 0;
+    if (out.preedit().has_highlighted_position()) {
+        const int highlighted =
+            static_cast<int>(out.preedit().highlighted_position());
+        if (highlighted >= 0 && highlighted < out.preedit().segment_size()) {
+            index = highlighted;
+        }
+    }
+    const auto &key = out.preedit().segment(index).key();
+    return key.empty() ? yomi : key;
+}
+
 void extractTopCandidates(const mc::Output &out,
                           int max_candidates,
                           const std::string &yomi,
                           std::vector<MozcCandidate> &dst) {
     std::string full = concatenatePreedit(out);
-    if (!full.empty()) {
+    if (!full.empty() && preeditCoversYomi(out, yomi)) {
         MozcCandidate c;
         c.value = std::move(full);
         c.reading = yomi;
@@ -208,12 +242,14 @@ void extractTopCandidates(const mc::Output &out,
         dst.push_back(std::move(c));
     }
     if (out.has_all_candidate_words()) {
+        const std::string fallback_reading = focusedSegmentReading(out, yomi);
         const auto &all = out.all_candidate_words();
         dst.reserve(dst.size() + static_cast<size_t>(all.candidates_size()));
         for (int i = 0; i < all.candidates_size() &&
                         static_cast<int>(dst.size()) < max_candidates;
              ++i) {
-            dst.push_back(fromCandidateWord(all.candidates(i), yomi));
+            dst.push_back(
+                fromCandidateWord(all.candidates(i), fallback_reading));
         }
     }
 }
@@ -438,15 +474,16 @@ MozcClient::beginRefinement(const std::string &yomi) {
     auto state = outputToResult(*first, yomi, options_.max_candidates);
     teardown.dismiss();
     return std::unique_ptr<RefinementSession>(
-        new RefinementSession(impl_, sid, options_, std::move(state)));
+        new RefinementSession(impl_, sid, options_, yomi, std::move(state)));
 }
 
 RefinementSession::RefinementSession(MozcClient::Impl *impl,
                                      uint64_t session_id,
                                      MozcClientOptions options,
+                                     std::string yomi,
                                      MozcConversionResult initial)
     : impl_(impl), session_id_(session_id), options_(std::move(options)),
-      current_(std::move(initial)) {}
+      yomi_(std::move(yomi)), current_(std::move(initial)) {}
 
 RefinementSession::~RefinementSession() {
     if (dead_ || !impl_) return;
@@ -463,6 +500,7 @@ sendSpecial(MozcClient::Impl &impl, uint64_t sid,
             const MozcClientOptions &opts,
             mc::KeyEvent::SpecialKey key,
             std::initializer_list<mc::KeyEvent::ModifierKey> mods,
+            const std::string &yomi,
             MozcConversionResult &cache) {
     mc::Input in;
     in.set_type(mc::Input::SEND_KEY);
@@ -472,10 +510,6 @@ sendSpecial(MozcClient::Impl &impl, uint64_t sid,
     for (auto m : mods) k->add_modifier_keys(m);
     auto out = impl.call(in, opts.timeout);
     if (!out) return std::nullopt;
-    std::string yomi;
-    if (!cache.top_candidates.empty()) {
-        yomi = cache.top_candidates.front().reading;
-    }
     cache = outputToResult(*out, yomi, opts.max_candidates);
     return cache;
 }
@@ -486,42 +520,44 @@ std::optional<MozcConversionResult>
 RefinementSession::shrinkFocusedSegment() {
     if (dead_) return std::nullopt;
     return sendSpecial(*impl_, session_id_, options_,
-                       mc::KeyEvent::LEFT, {mc::KeyEvent::SHIFT}, current_);
+                       mc::KeyEvent::LEFT, {mc::KeyEvent::SHIFT}, yomi_,
+                       current_);
 }
 
 std::optional<MozcConversionResult>
 RefinementSession::growFocusedSegment() {
     if (dead_) return std::nullopt;
     return sendSpecial(*impl_, session_id_, options_,
-                       mc::KeyEvent::RIGHT, {mc::KeyEvent::SHIFT}, current_);
+                       mc::KeyEvent::RIGHT, {mc::KeyEvent::SHIFT}, yomi_,
+                       current_);
 }
 
 std::optional<MozcConversionResult>
 RefinementSession::focusNextSegment() {
     if (dead_) return std::nullopt;
     return sendSpecial(*impl_, session_id_, options_,
-                       mc::KeyEvent::RIGHT, {}, current_);
+                       mc::KeyEvent::RIGHT, {}, yomi_, current_);
 }
 
 std::optional<MozcConversionResult>
 RefinementSession::focusPrevSegment() {
     if (dead_) return std::nullopt;
     return sendSpecial(*impl_, session_id_, options_,
-                       mc::KeyEvent::LEFT, {}, current_);
+                       mc::KeyEvent::LEFT, {}, yomi_, current_);
 }
 
 std::optional<MozcConversionResult>
 RefinementSession::nextCandidate() {
     if (dead_) return std::nullopt;
     return sendSpecial(*impl_, session_id_, options_,
-                       mc::KeyEvent::SPACE, {}, current_);
+                       mc::KeyEvent::SPACE, {}, yomi_, current_);
 }
 
 std::optional<MozcConversionResult>
 RefinementSession::prevCandidate() {
     if (dead_) return std::nullopt;
     return sendSpecial(*impl_, session_id_, options_,
-                       mc::KeyEvent::UP, {}, current_);
+                       mc::KeyEvent::UP, {}, yomi_, current_);
 }
 
 } // namespace skk_mozc

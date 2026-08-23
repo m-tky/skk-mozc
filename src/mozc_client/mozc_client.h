@@ -162,11 +162,15 @@ private:
     friend class MozcClient;
     RefinementSession(MozcClient::Impl *impl, uint64_t session_id,
                       MozcClientOptions options,
+                      std::string yomi,
                       MozcConversionResult initial);
 
     MozcClient::Impl *impl_;
     uint64_t session_id_;
     MozcClientOptions options_;
+    // Original full reading. Unlike current_.top_candidates, this remains
+    // complete even while Mozc temporarily returns only the focused segment.
+    std::string yomi_;
     MozcConversionResult current_;
     bool dead_ = false;
 };

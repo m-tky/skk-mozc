@@ -4,6 +4,8 @@
 let
   cfg = config.programs.fcitx5-skk-mozc;
   pkg = self.packages.${pkgs.stdenv.hostPlatform.system}.fcitx5-skk-mozc;
+  skkDataDir = "${config.home.homeDirectory}/.local/share/fcitx5/skk";
+  userDictionary = "${skkDataDir}/user.dict";
 in
 {
   options.programs.fcitx5-skk-mozc = {
@@ -54,6 +56,17 @@ in
         warning when mozc_server is unreachable.
       '';
     };
+
+    extraSkkDictionaries = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      example = lib.literalExpression
+        "[ \"\${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei\" ]";
+      description = ''
+        Additional read-only SKK dictionary files. They are appended after
+        the default SKK-JISYO.L entry in fcitx5-skk's dictionary list.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable (
@@ -95,15 +108,25 @@ in
     home.sessionVariables = mozcEnv;
     systemd.user.sessionVariables = mozcEnv;
 
-    # SKK dictionaries themselves are not managed by this module; users
-    # configure them via the standard fcitx5-skk location at
-    # ~/.local/share/fcitx5/skk/dictionary_list. Learning lands in whatever
-    # writable SKK dict libskk owns — by default fcitx5-skk auto-attaches
-    # ~/.local/share/fcitx5/skk/user.dict, which is sufficient for most
-    # users. This module deliberately does NOT seed ~/.skk-jisyo so we
-    # don't fork the user's learning across two files.
+    # Keep the mutable personal dictionary outside the Nix store and put it
+    # first in the list. The integration deliberately chooses the first
+    # writable dict as its learning target, so omitting this entry makes
+    # selections commit successfully but silently lose their history.
+    home.file.".local/share/fcitx5/skk/dictionary_list".text =
+      lib.concatStringsSep "\n" (
+        [
+          "file=${userDictionary},mode=readwrite,type=file"
+          "file=${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L,mode=readonly,type=file"
+        ] ++ map (path: "file=${path},mode=readonly,type=file")
+          cfg.extraSkkDictionaries
+      ) + "\n";
 
-    home.activation.skkMozcInitCache = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    # `home.file` may safely manage dictionary_list, but must never manage
+    # user.dict itself: it is changed at runtime by libskk. Create it only
+    # when missing so activation preserves all accumulated learning.
+    home.activation.skkMozcInitState = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run mkdir -p ${lib.escapeShellArg skkDataDir}
+      run touch ${lib.escapeShellArg userDictionary}
       run mkdir -p $HOME/.cache/skk-mozc
     '';
   });

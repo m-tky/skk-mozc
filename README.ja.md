@@ -13,7 +13,7 @@ SKK の入力哲学はそのまま残しつつ、SKK 辞書にない複合語 (�
   - 「くらうどさーびす」→「クラウドサービス」 (カタカナ複合語)
   - 「にゅーよーくしゅう」→「ニューヨーク州」 (カタカナ + 漢字接尾辞)
   - 「わたしはがくせいです」→「私は学生です」 (連文節)
-- SKK 個人辞書のヒットは常に最上位。Mozc 由来の候補も、選んだ瞬間に libskk の書き込み可能ユーザ辞書 (デフォルトは `~/.local/share/fcitx5/skk/user.dict`) に学習されるので、二度目以降は SKK のトップヒットとして即座に出ます。
+- SKK 個人辞書のヒットは常に最上位。Mozc 由来の候補も、選んだ瞬間に書き込み可能な SKK 個人辞書へ学習されるので、二度目以降は SKK のトップヒットとして即座に出ます。
 - 文節境界の調整も可能 (Mozc 互換):
   - `Shift+←/→` で先頭文節を伸縮
   - `Tab` で注目文節を移動
@@ -153,16 +153,27 @@ Home Manager から使う場合は `programs.fcitx5-skk-mozc.{mozc.enable, mozc.
 
 ## SKK 辞書
 
-このアドオンは SKK 辞書の管理には関与しません。標準の `~/.local/share/fcitx5/skk/dictionary_list` をそのまま使ってください。HM 経由なら例えば:
+Home Manager で有効化した場合、このモジュールが
+`~/.local/share/fcitx5/skk/dictionary_list` を管理します。初回だけ
+`~/.local/share/fcitx5/skk/user.dict` を作成し、それを先頭の書き込み可能辞書として登録します。既存の学習内容を上書きすることはありません。読み取り専用辞書の既定値は `SKK-JISYO.L` です。
+
+追加の読み取り専用辞書は `extraSkkDictionaries` で指定します:
 
 ```nix
-home.file.".local/share/fcitx5/skk/dictionary_list".text = ''
-  file=${pkgs.skkDictionaries.l}/share/skk/SKK-JISYO.L,mode=readonly,type=file
-  file=${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei,mode=readonly,type=file
-'';
+programs.fcitx5-skk-mozc.extraSkkDictionaries = [
+  "${pkgs.skkDictionaries.jinmei}/share/skk/SKK-JISYO.jinmei"
+];
 ```
 
-学習 (SKK 由来でも Mozc 由来でも) はすべて libskk の書き込み可能ユーザ辞書スロットに集約されます。明示的に指定しない場合、fcitx5-skk のデフォルトである `~/.local/share/fcitx5/skk/user.dict` が使われます。特定のパスに固定したい場合は、上記の dictionary_list に `file=~/your-dict,mode=readwrite,type=file` を追加してください。
+この構成では、SKK と Mozc 由来の学習はすべて
+`~/.local/share/fcitx5/skk/user.dict` に保存されます。同じ
+`home.file` を独自に定義せず、追加辞書には `extraSkkDictionaries` を使ってください。
+
+Home Manager を使わない場合は、有効な `dictionary_list` の読み取り専用辞書より前に、例えば次の書き込み可能エントリを置いてください:
+
+```text
+file=/home/you/.local/share/fcitx5/skk/user.dict,mode=readwrite,type=file
+```
 
 ## 開発
 

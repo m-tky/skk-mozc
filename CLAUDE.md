@@ -101,11 +101,11 @@ All under `programs.fcitx5-skk-mozc.*`:
 When `enable = true`:
 - The addon package is added to `i18n.inputMethod.fcitx5.addons`
 - `nixpkgs.mozc` is auto-added too (it supplies the `mozc_server` binary)
-- `nixpkgs.skkDictionaries.l` lands in the default dictionary_list
-- The module does *not* create a personal dictionary file. fcitx5-skk's
-  default `~/.local/share/fcitx5/skk/user.dict` is used as the write
-  target as-is (only `~/.cache/skk-mozc` is pre-created via
-  `home.activation`).
+- The module manages `~/.local/share/fcitx5/skk/dictionary_list`: its first
+  entry is the writable `~/.local/share/fcitx5/skk/user.dict`, followed by
+  `nixpkgs.skkDictionaries.l` and `extraSkkDictionaries`.
+- `user.dict` is created only if it is missing, as a normal mutable file;
+  `home.activation` never replaces accumulated learning.
 
 ### Repository layout
 
