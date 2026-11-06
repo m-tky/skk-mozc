@@ -68,7 +68,7 @@
                 cp -r ${./.} src
                 chmod -R u+w src
                 cd src
-                ./scripts/sync-versions.sh --check
+                bash ./scripts/sync-versions.sh --check
                 touch $out
               '';
           };
